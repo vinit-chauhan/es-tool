@@ -7,8 +7,14 @@ API directly via `net/http` — the only dependency is
 ## Build
 
 ```bash
+make build        # builds ./bin/es-tool (with version stamped from git)
+make install      # go install onto your GOPATH/bin
+make test         # run tests
+make check        # fmt-check + vet + test (CI gate)
+make help         # list all targets
+
+# ...or without make:
 go build -o es-tool ./cmd/es-tool
-# or install onto your PATH:
 go install github.com/vinit-chauhan/es-tool/cmd/es-tool@latest
 ```
 

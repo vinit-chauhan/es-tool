@@ -1,6 +1,8 @@
-# Built binary
+# Build output
+/bin/
 /es-tool
 
 # Go build/test artifacts
 *.test
 *.out
+coverage.out

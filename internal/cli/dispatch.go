@@ -43,16 +43,20 @@ var commands = map[string]command{
 // commandOrder controls how commands are listed in help output.
 var commandOrder = []string{
 	"ping", "indices", "mapping", "count", "search", "get",
-	"index", "update", "edit", "delete", "delete-by-query", "repl", "tui",
+	"index", "update", "edit", "delete", "delete-by-query", "repl", "tui", "version",
 }
 
 // Main is the process entrypoint used by cmd/es-tool. It returns the exit code.
-func Main(argv []string) int {
+func Main(version string, argv []string) int {
 	if len(argv) == 0 || argv[0] == "-h" || argv[0] == "--help" || argv[0] == "help" {
 		usage()
 		if len(argv) == 0 {
 			return 2
 		}
+		return 0
+	}
+	if argv[0] == "version" || argv[0] == "--version" || argv[0] == "-v" {
+		fmt.Printf("es-tool %s\n", version)
 		return 0
 	}
 
@@ -71,10 +75,15 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "\nusage: es-tool <command> [args]\n\ncommands:")
 	for _, name := range commandOrder {
 		var help string
-		if name == "repl" {
+		switch name {
+		case "repl":
 			help = "start interactive REPL"
-		} else if c, ok := commands[name]; ok {
-			help = c.help
+		case "version":
+			help = "print version and exit"
+		default:
+			if c, ok := commands[name]; ok {
+				help = c.help
+			}
 		}
 		fmt.Fprintf(os.Stderr, "  %-16s %s\n", name, help)
 	}
