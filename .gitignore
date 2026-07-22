@@ -1,0 +1,6 @@
+# Built binary
+/es-tool
+
+# Go build/test artifacts
+*.test
+*.out
