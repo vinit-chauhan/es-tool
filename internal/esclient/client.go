@@ -30,6 +30,15 @@ import (
 // DefaultURL is used when ES_URL is not set.
 const DefaultURL = "http://localhost:9202"
 
+// Options describes an Elasticsearch connection.
+type Options struct {
+	BaseURL   string
+	APIKey    string
+	User      string
+	Password  string
+	VerifyTLS bool
+}
+
 // Client is a thin HTTP client for the Elasticsearch REST API.
 type Client struct {
 	BaseURL   string
@@ -49,20 +58,54 @@ func NewFromEnv() *Client {
 	case "0", "false", "no":
 		verifyTLS = false
 	}
-	c := &Client{
+	return New(Options{
 		BaseURL:   strings.TrimRight(getenvDefault("ES_URL", DefaultURL), "/"),
 		APIKey:    os.Getenv("ES_API_KEY"),
 		User:      os.Getenv("ES_USER"),
 		Password:  os.Getenv("ES_PASSWORD"),
 		VerifyTLS: verifyTLS,
+	})
+}
+
+// EnvConfigured reports whether any ES_* connection setting was explicitly
+// provided. The TUI uses this to keep environment variables higher precedence
+// than its saved default cluster.
+func EnvConfigured() bool {
+	for _, key := range []string{"ES_URL", "ES_API_KEY", "ES_USER", "ES_PASSWORD", "ES_VERIFY_TLS"} {
+		if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+			return true
+		}
 	}
+	return false
+}
+
+// New builds a Client from explicit options.
+func New(opts Options) *Client {
+	c := &Client{}
+	c.Configure(opts)
+	return c
+}
+
+// Configure replaces the connection settings and rebuilds the HTTP transport.
+func (c *Client) Configure(opts Options) {
+	if c.http != nil {
+		c.http.CloseIdleConnections()
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/")
+	if baseURL == "" {
+		baseURL = DefaultURL
+	}
+	c.BaseURL = baseURL
+	c.APIKey = opts.APIKey
+	c.User = opts.User
+	c.Password = opts.Password
+	c.VerifyTLS = opts.VerifyTLS
 	c.http = &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: !verifyTLS}, //nolint:gosec // opt-in via ES_VERIFY_TLS
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: !opts.VerifyTLS}, //nolint:gosec // explicit user setting
 		},
 	}
-	return c
 }
 
 func getenvDefault(key, def string) string {

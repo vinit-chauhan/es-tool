@@ -99,11 +99,12 @@ keyboard. Built on `tcell` (works on Linux/macOS terminals).
 
 Keys:
 
-| Screen  | Keys                                                                                                                                                        |
-| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Indices | `↑/↓` `j/k` move · `Enter` open · `/` filter · `r` refresh · `q` quit                                                                                       |
-| Docs    | `↑/↓` page nav · `Enter`/`v` view · `e` edit · `d` delete · `/` filter · `f` Lucene query · `n/p` page · `s` size · `r` refresh · `b`/`Esc` back · `q` quit |
-| Viewer  | `↑/↓` `PgUp/PgDn` `g/G` scroll · `e` edit · `d` delete · `b`/`Esc` back · `q` quit                                                                          |
+| Screen   | Keys                                                                                                                                                                       |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Indices  | `↑/↓` `j/k` move · `Enter` open · `/` filter · `r` refresh · `S` settings · `q` quit                                                                                       |
+| Docs     | `↑/↓` page nav · `Enter`/`v` view · `e` edit · `d` delete · `/` filter · `f` Lucene query · `n/p` page · `s` size · `r` refresh · `S` settings · `b`/`Esc` back · `q` quit |
+| Viewer   | `↑/↓` `PgUp/PgDn` `g/G` scroll · `e` edit · `d` delete · `S` settings · `b`/`Esc` back · `q` quit                                                                          |
+| Settings | `↑/↓` `j/k` move · `Enter` use cluster · `a` add · `e` edit · `b`/`Esc` back · `q` quit                                                                                    |
 
 - `e` opens the document JSON in `$EDITOR` (the TUI suspends cleanly), and writes
   it back using optimistic concurrency control (`if_seq_no`/`if_primary_term`).
@@ -154,3 +155,12 @@ es> quit
 | `ES_USER`       | —                       | Basic-auth user (used with `ES_PASSWORD`)     |
 | `ES_PASSWORD`   | —                       | Basic-auth password                           |
 | `ES_VERIFY_TLS` | `1`                     | `0`/`false`/`no` disables TLS verification    |
+
+The TUI settings page (`S`) stores named cluster profiles in
+`es-tool/config.json` under the platform's user config directory. The file can
+contain API keys or passwords and is written with owner-only (`0600`)
+permissions. Secret fields are masked in the TUI.
+
+The active saved profile is used on the next TUI launch. Explicit `ES_*`
+environment variables take precedence at startup; choosing a profile from the
+settings page switches the current session to it.

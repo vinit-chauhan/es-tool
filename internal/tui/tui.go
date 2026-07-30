@@ -11,6 +11,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
+	appconfig "github.com/vinit-chauhan/es-tool/internal/config"
 	"github.com/vinit-chauhan/es-tool/internal/esclient"
 	"github.com/vinit-chauhan/es-tool/internal/util"
 )
@@ -20,9 +21,13 @@ import (
 // ---------------------------------------------------------------------------
 
 type app struct {
-	screen tcell.Screen
-	client *esclient.Client
-	status statusMsg
+	screen        tcell.Screen
+	client        *esclient.Client
+	store         *appconfig.Store
+	config        appconfig.Config
+	activeCluster string
+	settingsWarn  string
+	status        statusMsg
 }
 
 type statusMsg struct {
@@ -39,6 +44,17 @@ type quitSignal struct{}
 
 // Run is the public entrypoint used by the CLI.
 func Run(client *esclient.Client, startIndex string) error {
+	store, err := appconfig.DefaultStore()
+	if err != nil {
+		return fmt.Errorf("settings unavailable: %w", err)
+	}
+	cfg, loadErr := store.Load()
+	settingsWarn := ""
+	if loadErr != nil {
+		cfg = appconfig.New()
+		settingsWarn = "saved settings were ignored: " + loadErr.Error()
+	}
+
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return fmt.Errorf("tui unavailable: %w", err)
@@ -49,7 +65,19 @@ func Run(client *esclient.Client, startIndex string) error {
 	defer screen.Fini()
 	screen.HideCursor()
 
-	a := &app{screen: screen, client: client}
+	a := &app{
+		screen:       screen,
+		client:       client,
+		store:        store,
+		config:       cfg,
+		settingsWarn: settingsWarn,
+	}
+	if !esclient.EnvConfigured() && cfg.Active != "" {
+		if cluster, ok := cfg.Find(cfg.Active); ok {
+			a.configureClient(cluster)
+			a.activeCluster = cluster.Name
+		}
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -147,6 +175,15 @@ func (a *app) drawStatus(hint string) {
 // prompt shows an inline single-line editor at the bottom row. It returns the
 // entered text and ok=false if the user pressed Esc.
 func (a *app) prompt(label, initial string) (string, bool) {
+	return a.promptValue(label, initial, false)
+}
+
+// promptSecret is the masked equivalent of prompt.
+func (a *app) promptSecret(label, initial string) (string, bool) {
+	return a.promptValue(label, initial, true)
+}
+
+func (a *app) promptValue(label, initial string, masked bool) (string, bool) {
 	_, maxY := a.size()
 	line := maxY - 1
 	buf := []rune(initial)
@@ -154,7 +191,11 @@ func (a *app) prompt(label, initial string) (string, bool) {
 	for {
 		a.clearLine(line)
 		a.drawText(0, line, styleBold, label)
-		a.drawText(len(label), line, styleDefault, string(buf))
+		value := string(buf)
+		if masked {
+			value = strings.Repeat("*", len(buf))
+		}
+		a.drawText(len(label), line, styleDefault, value)
 		a.screen.ShowCursor(len(label)+len(buf), line)
 		a.screen.Show()
 
@@ -174,6 +215,8 @@ func (a *app) prompt(label, initial string) (string, bool) {
 			if len(buf) > 0 {
 				buf = buf[:len(buf)-1]
 			}
+		case tcell.KeyCtrlU:
+			buf = buf[:0]
 		case tcell.KeyRune:
 			buf = append(buf, ke.Rune())
 		}
@@ -372,6 +415,405 @@ func filterHits(items []map[string]any, needle string) []map[string]any {
 }
 
 // ---------------------------------------------------------------------------
+// Cluster settings
+// ---------------------------------------------------------------------------
+
+type clusterField int
+
+const (
+	fieldName clusterField = iota
+	fieldURL
+	fieldAuth
+	fieldAPIKey
+	fieldUser
+	fieldPassword
+	fieldVerifyTLS
+)
+
+func (a *app) configureClient(cluster appconfig.Cluster) {
+	a.client.Configure(esclient.Options{
+		BaseURL:   cluster.URL,
+		APIKey:    cluster.APIKey,
+		User:      cluster.User,
+		Password:  cluster.Password,
+		VerifyTLS: cluster.VerifyTLS,
+	})
+}
+
+func clusterAuthMode(cluster appconfig.Cluster) string {
+	switch {
+	case cluster.APIKey != "":
+		return "apikey"
+	case cluster.User != "" || cluster.Password != "":
+		return "basic"
+	default:
+		return "none"
+	}
+}
+
+func clusterAuthLabel(cluster appconfig.Cluster) string {
+	switch clusterAuthMode(cluster) {
+	case "apikey":
+		return "API key"
+	case "basic":
+		return "basic"
+	default:
+		return "none"
+	}
+}
+
+func secretSummary(value string) string {
+	if value == "" {
+		return "<not set>"
+	}
+	return "<set>"
+}
+
+func visibleClusterFields(auth string) []clusterField {
+	fields := []clusterField{fieldName, fieldURL, fieldAuth}
+	switch auth {
+	case "apikey":
+		fields = append(fields, fieldAPIKey)
+	case "basic":
+		fields = append(fields, fieldUser, fieldPassword)
+	}
+	return append(fields, fieldVerifyTLS)
+}
+
+func cycleAuthMode(current string, delta int) string {
+	modes := []string{"none", "apikey", "basic"}
+	index := 0
+	for i, mode := range modes {
+		if mode == current {
+			index = i
+			break
+		}
+	}
+	index = (index + delta + len(modes)) % len(modes)
+	return modes[index]
+}
+
+func validateClusterAuth(auth string, cluster appconfig.Cluster) error {
+	switch auth {
+	case "apikey":
+		if strings.TrimSpace(cluster.APIKey) == "" {
+			return fmt.Errorf("API key is required for API key authentication")
+		}
+	case "basic":
+		if strings.TrimSpace(cluster.User) == "" {
+			return fmt.Errorf("username is required for basic authentication")
+		}
+	}
+	return nil
+}
+
+func clusterFieldText(field clusterField, cluster appconfig.Cluster, auth string) (string, string) {
+	switch field {
+	case fieldName:
+		return "Name", cluster.Name
+	case fieldURL:
+		return "URL", cluster.URL
+	case fieldAuth:
+		switch auth {
+		case "apikey":
+			return "Authentication", "API key"
+		case "basic":
+			return "Authentication", "Username / password"
+		default:
+			return "Authentication", "None"
+		}
+	case fieldAPIKey:
+		return "API key", secretSummary(cluster.APIKey)
+	case fieldUser:
+		return "Username", cluster.User
+	case fieldPassword:
+		return "Password", secretSummary(cluster.Password)
+	case fieldVerifyTLS:
+		if cluster.VerifyTLS {
+			return "Verify TLS", "On"
+		}
+		return "Verify TLS", "Off (insecure)"
+	default:
+		return "", ""
+	}
+}
+
+func (a *app) editClusterScreen(initial appconfig.Cluster, originalName string) (appconfig.Cluster, bool) {
+	draft := initial
+	auth := clusterAuthMode(draft)
+	selected := 0
+	a.status.clear()
+
+	for {
+		fields := visibleClusterFields(auth)
+		selected = min(selected, len(fields)-1)
+
+		a.screen.Clear()
+		maxX, _ := a.size()
+		title := "Add cluster"
+		if originalName != "" {
+			title = "Edit cluster"
+		}
+		a.drawHeader(title, "credentials are saved in the user config file")
+		a.drawText(2, 2, styleDim, "Select a field and press Enter to edit it.")
+
+		for i, field := range fields {
+			label, value := clusterFieldText(field, draft, auth)
+			row := fmt.Sprintf("  %-18s %s", label, value)
+			style := styleDefault
+			if i == selected {
+				style = styleSelect
+			}
+			a.drawText(0, 4+i, style, util.Clip(util.PadRight(row, maxX), maxX))
+		}
+		a.drawStatus("↑/↓ field  Enter edit  ←/→ change option  s save  b/Esc cancel  q quit")
+		a.screen.Show()
+
+		ev := a.screen.PollEvent()
+		ke, ok := ev.(*tcell.EventKey)
+		if !ok {
+			continue
+		}
+		field := fields[selected]
+		switch {
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'q':
+			panic(quitSignal{})
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'b', ke.Key() == tcell.KeyEscape:
+			a.status.clear()
+			return appconfig.Cluster{}, false
+		case ke.Key() == tcell.KeyUp, ke.Key() == tcell.KeyRune && ke.Rune() == 'k':
+			selected = max(0, selected-1)
+		case ke.Key() == tcell.KeyDown, ke.Key() == tcell.KeyRune && ke.Rune() == 'j':
+			selected = min(len(fields)-1, selected+1)
+		case ke.Key() == tcell.KeyLeft:
+			switch field {
+			case fieldAuth:
+				auth = cycleAuthMode(auth, -1)
+			case fieldVerifyTLS:
+				draft.VerifyTLS = !draft.VerifyTLS
+			}
+			a.status.clear()
+		case ke.Key() == tcell.KeyRight, ke.Key() == tcell.KeyRune && ke.Rune() == ' ':
+			switch field {
+			case fieldAuth:
+				auth = cycleAuthMode(auth, 1)
+			case fieldVerifyTLS:
+				draft.VerifyTLS = !draft.VerifyTLS
+			}
+			a.status.clear()
+		case ke.Key() == tcell.KeyEnter:
+			var value string
+			var accepted bool
+			switch field {
+			case fieldName:
+				value, accepted = a.prompt("cluster name: ", draft.Name)
+				if accepted {
+					draft.Name = value
+				}
+			case fieldURL:
+				value, accepted = a.prompt("cluster URL: ", draft.URL)
+				if accepted {
+					draft.URL = value
+				}
+			case fieldAuth:
+				auth = cycleAuthMode(auth, 1)
+				accepted = true
+			case fieldAPIKey:
+				value, accepted = a.promptSecret("API key (Ctrl+U replaces): ", draft.APIKey)
+				if accepted {
+					draft.APIKey = value
+				}
+			case fieldUser:
+				value, accepted = a.prompt("username: ", draft.User)
+				if accepted {
+					draft.User = value
+				}
+			case fieldPassword:
+				value, accepted = a.promptSecret("password (Ctrl+U replaces): ", draft.Password)
+				if accepted {
+					draft.Password = value
+				}
+			case fieldVerifyTLS:
+				draft.VerifyTLS = !draft.VerifyTLS
+				accepted = true
+			}
+			if accepted {
+				a.status.clear()
+			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 's':
+			switch auth {
+			case "none":
+				draft.APIKey, draft.User, draft.Password = "", "", ""
+			case "apikey":
+				draft.User, draft.Password = "", ""
+			case "basic":
+				draft.APIKey = ""
+			}
+			draft.Normalize()
+			if err := validateClusterAuth(auth, draft); err != nil {
+				a.status.setErr(err.Error())
+				continue
+			}
+			candidate := a.config.Clone()
+			if err := candidate.Upsert(originalName, draft); err != nil {
+				a.status.setErr(err.Error())
+				continue
+			}
+			a.status.clear()
+			return draft, true
+		}
+	}
+}
+
+func (a *app) saveCluster(originalName string, cluster appconfig.Cluster) bool {
+	next := a.config.Clone()
+	if err := next.Upsert(originalName, cluster); err != nil {
+		a.status.setErr("save failed: " + err.Error())
+		return false
+	}
+
+	activate := originalName == "" || a.activeCluster == originalName
+	if activate {
+		next.Active = cluster.Name
+	}
+	if err := a.store.Save(next); err != nil {
+		a.status.setErr("save failed: " + err.Error())
+		return false
+	}
+
+	a.config = next
+	a.settingsWarn = ""
+	if activate {
+		a.configureClient(cluster)
+		a.activeCluster = cluster.Name
+		a.status.set(fmt.Sprintf("saved and using cluster %q", cluster.Name))
+		return true
+	}
+	a.status.set(fmt.Sprintf("saved cluster %q", cluster.Name))
+	return false
+}
+
+func (a *app) activateSavedCluster(name string) bool {
+	cluster, ok := a.config.Find(name)
+	if !ok {
+		a.status.setErr(fmt.Sprintf("cluster %q no longer exists", name))
+		return false
+	}
+	next := a.config.Clone()
+	next.Active = name
+	if err := a.store.Save(next); err != nil {
+		a.status.setErr("save failed: " + err.Error())
+		return false
+	}
+	a.config = next
+	a.settingsWarn = ""
+	a.configureClient(cluster)
+	a.activeCluster = name
+	a.status.set(fmt.Sprintf("using cluster %q", name))
+	return true
+}
+
+func (a *app) settingsScreen() (connectionChanged bool) {
+	st := &listState{length: len(a.config.Clusters)}
+
+	for {
+		st.length = len(a.config.Clusters)
+		st.cursor = min(st.cursor, max(0, st.length-1))
+		st.top = min(st.top, st.cursor)
+
+		a.screen.Clear()
+		maxX, maxY := a.size()
+		source := "environment/session"
+		if a.activeCluster != "" {
+			source = "profile " + a.activeCluster
+		}
+		a.drawHeader("Settings", fmt.Sprintf("current: %s [%s]", a.client.BaseURL, source))
+		if a.settingsWarn != "" {
+			a.drawText(0, 1, styleErr, util.Clip("Warning: "+a.settingsWarn, maxX))
+		}
+		a.drawText(0, 2, styleUnder, util.Clip(fmt.Sprintf("  %-20s  %-44s  %-9s  %s", "name", "URL", "auth", "TLS"), maxX))
+
+		bodyTop := 3
+		bodyHeight := max(1, maxY-bodyTop-1)
+		if st.length == 0 {
+			a.drawText(2, bodyTop+1, styleDim, "No saved clusters. Press a to add one.")
+		} else {
+			a.drawList(bodyTop, bodyHeight, maxX, st, func(i int) string {
+				cluster := a.config.Clusters[i]
+				marker := " "
+				if cluster.Name == a.activeCluster {
+					marker = "*"
+				}
+				tls := "verify"
+				if !cluster.VerifyTLS {
+					tls = "skip"
+				}
+				return fmt.Sprintf("%s %-20s  %-44s  %-9s  %s",
+					marker,
+					util.Clip(cluster.Name, 20),
+					util.Clip(cluster.URL, 44),
+					clusterAuthLabel(cluster),
+					tls)
+			})
+		}
+		a.drawStatus("↑/↓ move  Enter use  a add  e edit  b/Esc back  q quit")
+		a.screen.Show()
+
+		ev := a.screen.PollEvent()
+		ke, ok := ev.(*tcell.EventKey)
+		if !ok {
+			continue
+		}
+		switch {
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'q':
+			panic(quitSignal{})
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'b', ke.Key() == tcell.KeyEscape:
+			return connectionChanged
+		case ke.Key() == tcell.KeyUp, ke.Key() == tcell.KeyRune && ke.Rune() == 'k':
+			st.move(-1, bodyHeight)
+		case ke.Key() == tcell.KeyDown, ke.Key() == tcell.KeyRune && ke.Rune() == 'j':
+			st.move(1, bodyHeight)
+		case ke.Key() == tcell.KeyPgDn:
+			st.move(bodyHeight, bodyHeight)
+		case ke.Key() == tcell.KeyPgUp:
+			st.move(-bodyHeight, bodyHeight)
+		case ke.Key() == tcell.KeyHome, ke.Key() == tcell.KeyRune && ke.Rune() == 'g':
+			st.home()
+		case ke.Key() == tcell.KeyEnd, ke.Key() == tcell.KeyRune && ke.Rune() == 'G':
+			st.end(bodyHeight)
+		case ke.Key() == tcell.KeyEnter:
+			if st.length > 0 && a.activateSavedCluster(a.config.Clusters[st.cursor].Name) {
+				connectionChanged = true
+			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'a':
+			initial := appconfig.Cluster{
+				URL:       a.client.BaseURL,
+				APIKey:    a.client.APIKey,
+				User:      a.client.User,
+				Password:  a.client.Password,
+				VerifyTLS: a.client.VerifyTLS,
+			}
+			if cluster, saved := a.editClusterScreen(initial, ""); saved {
+				if a.saveCluster("", cluster) {
+					connectionChanged = true
+				}
+				st.length = len(a.config.Clusters)
+				st.end(bodyHeight)
+			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'e':
+			if st.length > 0 {
+				cluster := a.config.Clusters[st.cursor]
+				if edited, saved := a.editClusterScreen(cluster, cluster.Name); saved {
+					if a.saveCluster(cluster.Name, edited) {
+						connectionChanged = true
+					}
+				}
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Indices screen
 // ---------------------------------------------------------------------------
 
@@ -421,7 +863,7 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 				util.AsStr(r["docs.count"]),
 				util.AsStr(r["store.size"]))
 		})
-		a.drawStatus("↑/↓ move  Enter open  / filter  r refresh  q quit")
+		a.drawStatus("↑/↓ move  Enter open  / filter  r refresh  S settings  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -452,6 +894,10 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 			if v, ok := a.prompt("filter: ", filterText); ok {
 				filterText = v
 				applyFilter()
+			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'S':
+			if a.settingsScreen() {
+				reload()
 			}
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'r':
 			reload()
@@ -510,7 +956,7 @@ func (a *app) docsScreen(ctx *docsContext) {
 		a.drawList(bodyTop, bodyHeight, maxX, st, func(i int) string {
 			return renderDocRow(items[i])
 		})
-		a.drawStatus("Enter/v view  e edit  d delete  / filter  f query  n/p page  s size  r refresh  b back  q quit")
+		a.drawStatus("Enter/v view  e edit  d delete  / filter  f query  n/p page  s size  r refresh  S settings  b back  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -579,6 +1025,12 @@ func (a *app) docsScreen(ctx *docsContext) {
 					reload()
 				}
 			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'S':
+			if a.settingsScreen() {
+				ctx.from = 0
+				st.home()
+				reload()
+			}
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'r':
 			reload()
 		}
@@ -610,7 +1062,7 @@ func (a *app) viewDocScreen(index string, hit map[string]any) {
 			}
 			a.drawText(0, bodyTop+i, styleDefault, util.Clip(lines[li], maxX))
 		}
-		a.drawStatus("↑/↓ scroll  PgUp/PgDn page  g/G top/bot  e edit  d delete  b/Esc back  q quit")
+		a.drawStatus("↑/↓ scroll  PgUp/PgDn page  g/G top/bot  e edit  d delete  S settings  b/Esc back  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -651,6 +1103,10 @@ func (a *app) viewDocScreen(index string, hit map[string]any) {
 			}
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'd':
 			if a.deleteDoc(index, hit) {
+				return
+			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'S':
+			if a.settingsScreen() {
 				return
 			}
 		}
