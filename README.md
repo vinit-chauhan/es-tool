@@ -48,6 +48,25 @@ export ES_URL=http://localhost:9202     # your ES endpoint
 ./es-tool          # prints usage
 ```
 
+## Shell completion
+
+Generate command and flag completions for Bash, Zsh, or Fish:
+
+```bash
+# Bash
+source <(es-tool completion bash)
+
+# Zsh (after compinit)
+autoload -Uz compinit && compinit
+source <(es-tool completion zsh)
+
+# Fish
+es-tool completion fish | source
+```
+
+Add the command for your shell to its startup file to enable completion in
+future sessions.
+
 ## CLI examples
 
 ```bash

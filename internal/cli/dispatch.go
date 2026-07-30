@@ -38,12 +38,13 @@ var commands = map[string]command{
 	"delete":          {"delete a document by id", cmdDelete},
 	"delete-by-query": {"delete docs matching a query", cmdDeleteByQuery},
 	"tui":             {"full-screen interactive browser (select/view/edit/delete docs)", cmdTUI},
+	"completion":      {"generate shell completion for bash, zsh, or fish", cmdCompletion},
 }
 
 // commandOrder controls how commands are listed in help output.
 var commandOrder = []string{
 	"ping", "indices", "mapping", "count", "search", "get",
-	"index", "update", "edit", "delete", "delete-by-query", "repl", "tui", "version",
+	"index", "update", "edit", "delete", "delete-by-query", "repl", "tui", "completion", "version",
 }
 
 // Main is the process entrypoint used by cmd/es-tool. It returns the exit code.
