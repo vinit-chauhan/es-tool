@@ -27,6 +27,7 @@ type app struct {
 	config        appconfig.Config
 	activeCluster string
 	settingsWarn  string
+	showHidden    bool
 	health        clusterHealth
 	status        statusMsg
 }
@@ -430,9 +431,17 @@ func (a *app) updateHealthAfterRequest(requestErr error) {
 	a.refreshHealth()
 }
 
-func (a *app) fetchIndices() ([]map[string]any, error) {
+func (a *app) fetchIndices(showHidden bool) ([]map[string]any, error) {
+	expandWildcards := "open,closed"
+	if showHidden {
+		expandWildcards = "all"
+	}
 	status, body, err := a.client.Request("GET", "/_cat/indices",
-		nil, map[string]string{"format": "json", "v": "true"})
+		nil, map[string]string{
+			"expand_wildcards": expandWildcards,
+			"format":           "json",
+			"v":                "true",
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -440,21 +449,18 @@ func (a *app) fetchIndices() ([]map[string]any, error) {
 	if status >= 300 || !ok {
 		return nil, fmt.Errorf("_cat/indices failed: HTTP %d", status)
 	}
-	var visible []map[string]any
+	var indices []map[string]any
 	for _, r := range arr {
 		m, ok := r.(map[string]any)
 		if !ok {
 			continue
 		}
-		if strings.HasPrefix(util.AsStr(m["index"]), ".") {
-			continue
-		}
-		visible = append(visible, m)
+		indices = append(indices, m)
 	}
-	sort.Slice(visible, func(i, j int) bool {
-		return util.AsStr(visible[i]["index"]) < util.AsStr(visible[j]["index"])
+	sort.Slice(indices, func(i, j int) bool {
+		return util.AsStr(indices[i]["index"]) < util.AsStr(indices[j]["index"])
 	})
-	return visible, nil
+	return indices, nil
 }
 
 func (a *app) fetchDocs(ctx *docsContext) ([]map[string]any, error) {
@@ -522,14 +528,18 @@ func renderDocRow(hit map[string]any) string {
 	return fmt.Sprintf("%-40s  %s", docID, suffix)
 }
 
-func filterIndices(items []map[string]any, needle string) []map[string]any {
-	if needle == "" {
+func filterIndices(items []map[string]any, needle string, showHidden bool) []map[string]any {
+	if needle == "" && showHidden {
 		return items
 	}
 	low := strings.ToLower(needle)
 	var out []map[string]any
 	for _, it := range items {
-		if strings.Contains(strings.ToLower(util.AsStr(it["index"])), low) {
+		name := util.AsStr(it["index"])
+		if !showHidden && strings.HasPrefix(name, ".") {
+			continue
+		}
+		if strings.Contains(strings.ToLower(name), low) {
 			out = append(out, it)
 		}
 	}
@@ -548,6 +558,189 @@ func filterHits(items []map[string]any, needle string) []map[string]any {
 		}
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// Hotkey help
+// ---------------------------------------------------------------------------
+
+type hotkeyHelpEntry struct {
+	keys        string
+	description string
+}
+
+type hotkeyHelpSection struct {
+	title   string
+	entries []hotkeyHelpEntry
+}
+
+var hotkeyHelpSections = []hotkeyHelpSection{
+	{
+		title: "Global",
+		entries: []hotkeyHelpEntry{
+			{keys: "?", description: "Open or close this hotkey reference"},
+			{keys: "q", description: "Quit the TUI"},
+			{keys: "b / Esc", description: "Go back or cancel (Esc quits from Indices)"},
+			{keys: "S", description: "Open cluster settings"},
+		},
+	},
+	{
+		title: "Navigation",
+		entries: []hotkeyHelpEntry{
+			{keys: "↑ / ↓, j / k", description: "Move the selection or scroll one line"},
+			{keys: "PgUp / PgDn", description: "Move or scroll one page"},
+			{keys: "g / G, Home / End", description: "Jump to the first/last item or top/bottom"},
+			{keys: "Enter / v", description: "Open the selected item"},
+		},
+	},
+	{
+		title: "Indices",
+		entries: []hotkeyHelpEntry{
+			{keys: "/", description: "Filter visible indices by name"},
+			{keys: "h", description: "Toggle hidden indices"},
+			{keys: "r", description: "Refresh indices and cluster health"},
+			{keys: "Enter / v", description: "Open documents in the selected index"},
+		},
+	},
+	{
+		title: "Documents",
+		entries: []hotkeyHelpEntry{
+			{keys: "Enter / v", description: "View the selected document"},
+			{keys: "e", description: "Edit the selected document in $EDITOR"},
+			{keys: "d", description: "Delete the selected document after confirmation"},
+			{keys: "/", description: "Filter loaded documents by ID or source text"},
+			{keys: "f", description: "Set the server-side Lucene query"},
+			{keys: "n / p", description: "Load the next/previous page"},
+			{keys: "s", description: "Change the page size"},
+			{keys: "r", description: "Refresh the current page"},
+		},
+	},
+	{
+		title: "Document viewer",
+		entries: []hotkeyHelpEntry{
+			{keys: "e", description: "Edit the open document in $EDITOR"},
+			{keys: "d", description: "Delete the open document after confirmation"},
+		},
+	},
+	{
+		title: "Cluster settings",
+		entries: []hotkeyHelpEntry{
+			{keys: "Enter", description: "Use the selected cluster profile"},
+			{keys: "a", description: "Add and activate a cluster profile"},
+			{keys: "e", description: "Edit the selected cluster profile"},
+			{keys: "r", description: "Refresh cluster health"},
+		},
+	},
+	{
+		title: "Cluster profile editor",
+		entries: []hotkeyHelpEntry{
+			{keys: "↑ / ↓, j / k", description: "Select a settings field"},
+			{keys: "Enter", description: "Edit a field or toggle the selected option"},
+			{keys: "← / →, Space", description: "Change authentication or TLS verification"},
+			{keys: "s", description: "Validate and save the profile"},
+			{keys: "b / Esc", description: "Cancel without saving"},
+		},
+	},
+	{
+		title: "Inline value editor",
+		entries: []hotkeyHelpEntry{
+			{keys: "← / →", description: "Move the cursor"},
+			{keys: "Home / End", description: "Move to the start/end of the value"},
+			{keys: "Ctrl+A / Ctrl+E", description: "Move to the start/end of the value"},
+			{keys: "Backspace / Delete", description: "Delete before/at the cursor"},
+			{keys: "Ctrl+U", description: "Clear the value"},
+			{keys: "Enter", description: "Apply the edited value"},
+			{keys: "Esc", description: "Cancel editing"},
+		},
+	},
+}
+
+type hotkeyHelpRow struct {
+	section     string
+	keys        string
+	description string
+}
+
+func hotkeyHelpRows() []hotkeyHelpRow {
+	var rows []hotkeyHelpRow
+	for i, section := range hotkeyHelpSections {
+		if i > 0 {
+			rows = append(rows, hotkeyHelpRow{})
+		}
+		rows = append(rows, hotkeyHelpRow{section: section.title})
+		for _, entry := range section.entries {
+			rows = append(rows, hotkeyHelpRow{
+				keys:        entry.keys,
+				description: entry.description,
+			})
+		}
+	}
+	return rows
+}
+
+func (a *app) helpScreen() {
+	rows := hotkeyHelpRows()
+	top := 0
+
+	for {
+		a.screen.Clear()
+		maxX, maxY := a.size()
+		a.drawHeader("Keyboard shortcuts", fmt.Sprintf("%d shortcuts", hotkeyHelpCount()))
+
+		bodyTop := 2
+		bodyHeight := max(1, maxY-bodyTop-2)
+		maxTop := max(0, len(rows)-bodyHeight)
+		top = max(0, min(top, maxTop))
+		for i := 0; i < bodyHeight; i++ {
+			rowIndex := top + i
+			if rowIndex >= len(rows) {
+				break
+			}
+			row := rows[rowIndex]
+			y := bodyTop + i
+			switch {
+			case row.section != "":
+				a.drawText(0, y, styleBold, row.section)
+			case row.keys != "":
+				a.drawText(2, y, styleBold, util.Clip(util.PadRight(row.keys, 22), 22))
+				a.drawText(26, y, styleDefault, util.Clip(row.description, max(0, maxX-26)))
+			}
+		}
+		a.drawStatus("↑/↓ scroll  PgUp/PgDn page  g/G top/bottom  ?/b/Esc close  q quit")
+		a.screen.Show()
+
+		ev := a.screen.PollEvent()
+		ke, ok := ev.(*tcell.EventKey)
+		if !ok {
+			continue
+		}
+		switch {
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'q':
+			panic(quitSignal{})
+		case ke.Key() == tcell.KeyRune && (ke.Rune() == '?' || ke.Rune() == 'b'), ke.Key() == tcell.KeyEscape:
+			return
+		case ke.Key() == tcell.KeyUp, ke.Key() == tcell.KeyRune && ke.Rune() == 'k':
+			top--
+		case ke.Key() == tcell.KeyDown, ke.Key() == tcell.KeyRune && ke.Rune() == 'j':
+			top++
+		case ke.Key() == tcell.KeyPgUp:
+			top -= bodyHeight
+		case ke.Key() == tcell.KeyPgDn:
+			top += bodyHeight
+		case ke.Key() == tcell.KeyHome, ke.Key() == tcell.KeyRune && ke.Rune() == 'g':
+			top = 0
+		case ke.Key() == tcell.KeyEnd, ke.Key() == tcell.KeyRune && ke.Rune() == 'G':
+			top = maxTop
+		}
+	}
+}
+
+func hotkeyHelpCount() int {
+	count := 0
+	for _, section := range hotkeyHelpSections {
+		count += len(section.entries)
+	}
+	return count
 }
 
 // ---------------------------------------------------------------------------
@@ -703,7 +896,7 @@ func (a *app) editClusterScreen(initial appconfig.Cluster, originalName string) 
 			}
 			a.drawText(0, 4+i, style, util.Clip(util.PadRight(row, maxX), maxX))
 		}
-		a.drawStatus("↑/↓ field  Enter edit  ←/→ change option  s save  b/Esc cancel  q quit")
+		a.drawStatus("? help  ↑/↓ field  Enter edit  ←/→ change option  s save  b/Esc cancel  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -713,6 +906,8 @@ func (a *app) editClusterScreen(initial appconfig.Cluster, originalName string) 
 		}
 		field := fields[selected]
 		switch {
+		case ke.Key() == tcell.KeyRune && ke.Rune() == '?':
+			a.helpScreen()
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'q':
 			panic(quitSignal{})
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'b', ke.Key() == tcell.KeyEscape:
@@ -893,7 +1088,7 @@ func (a *app) settingsScreen() (connectionChanged bool) {
 					tls)
 			})
 		}
-		a.drawStatus("↑/↓ move  Enter use  a add  e edit  r health  b/Esc back  q quit")
+		a.drawStatus("? help  ↑/↓ move  Enter use  a add  e edit  r health  b/Esc back  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -902,6 +1097,8 @@ func (a *app) settingsScreen() (connectionChanged bool) {
 			continue
 		}
 		switch {
+		case ke.Key() == tcell.KeyRune && ke.Rune() == '?':
+			a.helpScreen()
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'q':
 			panic(quitSignal{})
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'b', ke.Key() == tcell.KeyEscape:
@@ -969,13 +1166,13 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 	filterText := ""
 
 	applyFilter := func() {
-		items = filterIndices(rawItems, filterText)
+		items = filterIndices(rawItems, filterText, a.showHidden)
 		st.length = len(items)
 		st.cursor = min(st.cursor, max(0, st.length-1))
 		st.top = min(st.top, st.cursor)
 	}
 	reload := func() {
-		v, err := a.fetchIndices()
+		v, err := a.fetchIndices(a.showHidden)
 		a.updateHealthAfterRequest(err)
 		if err != nil {
 			a.status.setErr("failed to fetch indices: " + err.Error())
@@ -995,6 +1192,9 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 		if filterText != "" {
 			sub += fmt.Sprintf("   filter: %q", filterText)
 		}
+		if a.showHidden {
+			sub += "   hidden: shown"
+		}
 		a.drawHeader("Indices", sub)
 
 		colHdr := fmt.Sprintf("%-6s  %-40s  %10s  %10s", "health", "index", "docs", "size")
@@ -1010,7 +1210,7 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 				util.AsStr(r["docs.count"]),
 				util.AsStr(r["store.size"]))
 		})
-		a.drawStatus("↑/↓ move  Enter open  / filter  r refresh  S settings  q quit")
+		a.drawStatus("? help  ↑/↓ move  Enter open  / filter  h hidden  r refresh  S settings  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -1019,6 +1219,8 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 			continue
 		}
 		switch {
+		case ke.Key() == tcell.KeyRune && ke.Rune() == '?':
+			a.helpScreen()
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'q', ke.Key() == tcell.KeyEscape:
 			return "", true
 		case ke.Key() == tcell.KeyUp, ke.Key() == tcell.KeyRune && ke.Rune() == 'k':
@@ -1041,6 +1243,15 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 			if v, ok := a.prompt("filter: ", filterText); ok {
 				filterText = v
 				applyFilter()
+			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'h':
+			a.showHidden = !a.showHidden
+			st.home()
+			reload()
+			if a.showHidden {
+				a.status.set("showing hidden indices")
+			} else {
+				a.status.set("hidden indices hidden")
 			}
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'S':
 			if a.settingsScreen() {
@@ -1104,7 +1315,7 @@ func (a *app) docsScreen(ctx *docsContext) {
 		a.drawList(bodyTop, bodyHeight, maxX, st, func(i int) string {
 			return renderDocRow(items[i])
 		})
-		a.drawStatus("Enter/v view  e edit  d delete  / filter  f query  n/p page  s size  r refresh  S settings  b back  q quit")
+		a.drawStatus("? help  Enter/v view  e edit  d delete  / filter  f query  n/p page  s size  r refresh  S settings  b back  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -1113,6 +1324,8 @@ func (a *app) docsScreen(ctx *docsContext) {
 			continue
 		}
 		switch {
+		case ke.Key() == tcell.KeyRune && ke.Rune() == '?':
+			a.helpScreen()
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'q':
 			panic(quitSignal{})
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'b', ke.Key() == tcell.KeyEscape:
@@ -1210,7 +1423,7 @@ func (a *app) viewDocScreen(index string, hit map[string]any) {
 			}
 			a.drawText(0, bodyTop+i, styleDefault, util.Clip(lines[li], maxX))
 		}
-		a.drawStatus("↑/↓ scroll  PgUp/PgDn page  g/G top/bot  e edit  d delete  S settings  b/Esc back  q quit")
+		a.drawStatus("? help  ↑/↓ scroll  PgUp/PgDn page  g/G top/bot  e edit  d delete  S settings  b/Esc back  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -1219,6 +1432,8 @@ func (a *app) viewDocScreen(index string, hit map[string]any) {
 			continue
 		}
 		switch {
+		case ke.Key() == tcell.KeyRune && ke.Rune() == '?':
+			a.helpScreen()
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'q':
 			panic(quitSignal{})
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'b', ke.Key() == tcell.KeyEscape:

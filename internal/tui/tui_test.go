@@ -2,6 +2,8 @@ package tui
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,6 +41,58 @@ func TestValidateClusterAuth(t *testing.T) {
 				t.Fatalf("validateClusterAuth() error = %v, want containing %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestFilterIndicesTogglesHiddenIndices(t *testing.T) {
+	items := []map[string]any{
+		{"index": ".kibana"},
+		{"index": "logs-app"},
+		{"index": "metrics-app"},
+	}
+
+	visible := filterIndices(items, "", false)
+	if got := indexNames(visible); got != "logs-app,metrics-app" {
+		t.Fatalf("visible indices = %q", got)
+	}
+
+	all := filterIndices(items, "", true)
+	if got := indexNames(all); got != ".kibana,logs-app,metrics-app" {
+		t.Fatalf("all indices = %q", got)
+	}
+
+	hiddenMatch := filterIndices(items, "kib", false)
+	if len(hiddenMatch) != 0 {
+		t.Fatalf("hidden match returned while hidden indices disabled: %#v", hiddenMatch)
+	}
+	hiddenMatch = filterIndices(items, "kib", true)
+	if got := indexNames(hiddenMatch); got != ".kibana" {
+		t.Fatalf("hidden filter match = %q", got)
+	}
+}
+
+func TestFetchIndicesExpandsHiddenWildcardsOnlyWhenEnabled(t *testing.T) {
+	var expandValues []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expandValues = append(expandValues, r.URL.Query().Get("expand_wildcards"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(server.Close)
+
+	a := &app{client: esclient.New(esclient.Options{
+		BaseURL:   server.URL,
+		VerifyTLS: true,
+	})}
+	if _, err := a.fetchIndices(false); err != nil {
+		t.Fatalf("fetchIndices(false) error = %v", err)
+	}
+	if _, err := a.fetchIndices(true); err != nil {
+		t.Fatalf("fetchIndices(true) error = %v", err)
+	}
+
+	if got := strings.Join(expandValues, ","); got != "open,closed,all" {
+		t.Fatalf("expand_wildcards values = %q", got)
 	}
 }
 
@@ -96,6 +150,52 @@ func TestDrawStatusKeepsHotkeysOnBottomLine(t *testing.T) {
 	}
 	if got := simulationRow(screen, 9); got != "S settings  q quit" {
 		t.Fatalf("hotkey row = %q", got)
+	}
+}
+
+func TestHotkeyHelpListsScreenAndEditorActions(t *testing.T) {
+	var text strings.Builder
+	for _, section := range hotkeyHelpSections {
+		text.WriteString(section.title)
+		for _, entry := range section.entries {
+			text.WriteString("\n")
+			text.WriteString(entry.keys)
+			text.WriteString(" ")
+			text.WriteString(entry.description)
+		}
+	}
+
+	for _, want := range []string{
+		"? Open or close",
+		"h Toggle hidden indices",
+		"S Open cluster settings",
+		"f Set the server-side Lucene query",
+		"a Add and activate a cluster profile",
+		"Ctrl+U Clear the value",
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Errorf("hotkey help is missing %q", want)
+		}
+	}
+	if got := hotkeyHelpCount(); got < 30 {
+		t.Fatalf("hotkey help contains only %d shortcuts", got)
+	}
+}
+
+func TestHelpScreenClosesWithQuestionMark(t *testing.T) {
+	screen := newSimulationScreen(t)
+	a := &app{screen: screen}
+	posted := make(chan struct{})
+	go func() {
+		defer close(posted)
+		screen.PostEventWait(tcell.NewEventKey(tcell.KeyRune, '?', tcell.ModNone))
+	}()
+
+	a.helpScreen()
+	<-posted
+
+	if got := simulationRow(screen, 0); !strings.Contains(got, "Keyboard shortcuts") {
+		t.Fatalf("help header = %q", got)
 	}
 }
 
@@ -233,4 +333,12 @@ func simulationRow(screen tcell.SimulationScreen, y int) string {
 		row = append(row, mainc)
 	}
 	return strings.TrimSpace(string(row))
+}
+
+func indexNames(items []map[string]any) string {
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item["index"].(string))
+	}
+	return strings.Join(names, ",")
 }
