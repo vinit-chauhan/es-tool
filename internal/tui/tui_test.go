@@ -96,6 +96,43 @@ func TestFetchIndicesExpandsHiddenWildcardsOnlyWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestFetchIndexDetailsRequestsSettingsAndMappings(t *testing.T) {
+	var gotPath, gotFeatures string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotFeatures = r.URL.Query().Get("features")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"logs-app": {
+				"aliases": {"current": {}},
+				"settings": {"index": {"number_of_shards": "1"}},
+				"mappings": {"properties": {"message": {"type": "text"}}}
+			}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+
+	a := &app{client: esclient.New(esclient.Options{
+		BaseURL:   server.URL,
+		VerifyTLS: true,
+	})}
+	details, err := a.fetchIndexDetails("logs-app")
+	if err != nil {
+		t.Fatalf("fetchIndexDetails() error = %v", err)
+	}
+	if gotPath != "/logs-app" || gotFeatures != "settings,mappings" {
+		t.Fatalf("request = %s?features=%s", gotPath, gotFeatures)
+	}
+	settings, ok := details.Settings.(map[string]any)
+	if !ok || settings["index"] == nil {
+		t.Fatalf("settings = %#v", details.Settings)
+	}
+	mappings, ok := details.Mappings.(map[string]any)
+	if !ok || mappings["properties"] == nil {
+		t.Fatalf("mappings = %#v", details.Mappings)
+	}
+}
+
 func TestSaveClusterAddsAndActivatesProfile(t *testing.T) {
 	store := &appconfig.Store{Path: filepath.Join(t.TempDir(), "config.json")}
 	client := esclient.New(esclient.Options{
@@ -142,13 +179,13 @@ func TestDrawStatusKeepsHotkeysOnBottomLine(t *testing.T) {
 	a := &app{screen: screen}
 	a.status.set("cluster saved")
 
-	a.drawStatus("S settings  q quit")
+	a.drawStatus(". settings  q quit")
 	screen.Show()
 
 	if got := simulationRow(screen, 8); got != "cluster saved" {
 		t.Fatalf("notification row = %q", got)
 	}
-	if got := simulationRow(screen, 9); got != "S settings  q quit" {
+	if got := simulationRow(screen, 9); got != ". settings  q quit" {
 		t.Fatalf("hotkey row = %q", got)
 	}
 }
@@ -168,7 +205,8 @@ func TestHotkeyHelpListsScreenAndEditorActions(t *testing.T) {
 	for _, want := range []string{
 		"? Open or close",
 		"h Toggle hidden indices",
-		"S Open cluster settings",
+		". Open cluster settings",
+		"S View settings and mappings",
 		"f Set the server-side Lucene query",
 		"a Add and activate a cluster profile",
 		"Ctrl+U Clear the value",

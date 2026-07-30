@@ -118,14 +118,16 @@ keyboard. Built on `tcell` (works on Linux/macOS terminals).
 
 Keys:
 
-| Screen   | Keys                                                                                                                                                                       |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Indices  | `↑/↓` `j/k` move · `Enter` open · `/` filter · `h` hidden indices · `r` refresh · `S` settings · `q` quit                                                                  |
-| Docs     | `↑/↓` page nav · `Enter`/`v` view · `e` edit · `d` delete · `/` filter · `f` Lucene query · `n/p` page · `s` size · `r` refresh · `S` settings · `b`/`Esc` back · `q` quit |
-| Viewer   | `↑/↓` `PgUp/PgDn` `g/G` scroll · `e` edit · `d` delete · `S` settings · `b`/`Esc` back · `q` quit                                                                          |
-| Settings | `↑/↓` `j/k` move · `Enter` use cluster · `a` add · `e` edit · `r` refresh health · `b`/`Esc` back · `q` quit                                                               |
+| Screen   | Keys                                                                                                                                                                                           |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Indices  | `↑/↓` `j/k` move · `Enter` open · `/` filter · `h` hidden indices · `r` refresh · `S` index details · `.` settings · `q` quit                                                                  |
+| Docs     | `↑/↓` page nav · `Enter`/`v` view · `e` edit · `d` delete · `/` filter · `f` Lucene query · `n/p` page · `s` size · `r` refresh · `S` index details · `.` settings · `b`/`Esc` back · `q` quit |
+| Viewer   | `↑/↓` `PgUp/PgDn` `g/G` scroll · `e` edit · `d` delete · `S` index details · `.` settings · `b`/`Esc` back · `q` quit                                                                          |
+| Settings | `↑/↓` `j/k` move · `Enter` use cluster · `a` add · `e` edit · `r` refresh health · `b`/`Esc` back · `q` quit                                                                                   |
 
 - Press `?` from any TUI screen to open the scrollable hotkey reference.
+- Press `S` to inspect the selected/current index settings and mappings; press
+  `.` to open cluster settings.
 - The top-right header indicator shows cluster health (`green`, `yellow`, or
   `red`) and reports authentication or connection failures.
 - Inline setting editors support `←/→`, `Home/End`, `Backspace/Delete`, and

@@ -4,6 +4,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -390,6 +391,11 @@ type docsContext struct {
 	total      int
 }
 
+type indexDetails struct {
+	Settings any `json:"settings"`
+	Mappings any `json:"mappings"`
+}
+
 func clusterHealthFromResponse(status int, body any, requestErr error) clusterHealth {
 	if requestErr != nil {
 		return clusterHealth{state: healthOffline, detail: requestErr.Error()}
@@ -497,6 +503,35 @@ func (a *app) fetchDocs(ctx *docsContext) ([]map[string]any, error) {
 	return hits, nil
 }
 
+func (a *app) fetchIndexDetails(index string) (indexDetails, error) {
+	status, body, err := a.client.Request("GET", "/"+index, nil,
+		map[string]string{"features": "settings,mappings"})
+	if err != nil {
+		return indexDetails{}, err
+	}
+	if status >= 300 {
+		return indexDetails{}, fmt.Errorf("index metadata failed: HTTP %d", status)
+	}
+	root, ok := body.(map[string]any)
+	if !ok {
+		return indexDetails{}, errors.New("index metadata failed: unexpected response")
+	}
+	rawDetails, ok := root[index]
+	if !ok && len(root) == 1 {
+		for _, value := range root {
+			rawDetails = value
+		}
+	}
+	details, ok := rawDetails.(map[string]any)
+	if !ok {
+		return indexDetails{}, errors.New("index metadata failed: index not found in response")
+	}
+	return indexDetails{
+		Settings: details["settings"],
+		Mappings: details["mappings"],
+	}, nil
+}
+
 func renderDocRow(hit map[string]any) string {
 	docID := util.AsStr(hit["_id"])
 	src, _ := hit["_source"].(map[string]any)
@@ -581,7 +616,6 @@ var hotkeyHelpSections = []hotkeyHelpSection{
 			{keys: "?", description: "Open or close this hotkey reference"},
 			{keys: "q", description: "Quit the TUI"},
 			{keys: "b / Esc", description: "Go back or cancel (Esc quits from Indices)"},
-			{keys: "S", description: "Open cluster settings"},
 		},
 	},
 	{
@@ -599,6 +633,8 @@ var hotkeyHelpSections = []hotkeyHelpSection{
 			{keys: "/", description: "Filter visible indices by name"},
 			{keys: "h", description: "Toggle hidden indices"},
 			{keys: "r", description: "Refresh indices and cluster health"},
+			{keys: "S", description: "View settings and mappings for the selected index"},
+			{keys: ".", description: "Open cluster settings"},
 			{keys: "Enter / v", description: "Open documents in the selected index"},
 		},
 	},
@@ -613,6 +649,8 @@ var hotkeyHelpSections = []hotkeyHelpSection{
 			{keys: "n / p", description: "Load the next/previous page"},
 			{keys: "s", description: "Change the page size"},
 			{keys: "r", description: "Refresh the current page"},
+			{keys: "S", description: "View settings and mappings for this index"},
+			{keys: ".", description: "Open cluster settings"},
 		},
 	},
 	{
@@ -620,6 +658,15 @@ var hotkeyHelpSections = []hotkeyHelpSection{
 		entries: []hotkeyHelpEntry{
 			{keys: "e", description: "Edit the open document in $EDITOR"},
 			{keys: "d", description: "Delete the open document after confirmation"},
+			{keys: "S", description: "View settings and mappings for this index"},
+			{keys: ".", description: "Open cluster settings"},
+		},
+	},
+	{
+		title: "Index details",
+		entries: []hotkeyHelpEntry{
+			{keys: "r", description: "Refresh index settings and mappings"},
+			{keys: ".", description: "Open cluster settings"},
 		},
 	},
 	{
@@ -741,6 +788,88 @@ func hotkeyHelpCount() int {
 		count += len(section.entries)
 	}
 	return count
+}
+
+func (a *app) indexDetailsScreen(index string) (connectionChanged bool) {
+	var lines []string
+	top := 0
+
+	reload := func() {
+		details, err := a.fetchIndexDetails(index)
+		a.updateHealthAfterRequest(err)
+		if err != nil {
+			a.status.setErr(err.Error())
+			lines = nil
+			return
+		}
+		text, err := util.MarshalIndent(details)
+		if err != nil {
+			a.status.setErr("format index metadata: " + err.Error())
+			lines = nil
+			return
+		}
+		lines = splitLines(text)
+		top = 0
+		a.status.clear()
+	}
+	reload()
+
+	for {
+		a.screen.Clear()
+		maxX, maxY := a.size()
+		a.drawHeader(index, fmt.Sprintf("settings and mappings   %d lines", len(lines)))
+
+		bodyTop := 2
+		bodyHeight := max(1, maxY-bodyTop-2)
+		maxTop := max(0, len(lines)-bodyHeight)
+		top = max(0, min(top, maxTop))
+		if len(lines) == 0 {
+			a.drawText(2, bodyTop, styleDim, "No index metadata available.")
+		} else {
+			for i := 0; i < bodyHeight; i++ {
+				lineIndex := top + i
+				if lineIndex >= len(lines) {
+					break
+				}
+				a.drawText(0, bodyTop+i, styleDefault, util.Clip(lines[lineIndex], maxX))
+			}
+		}
+		a.drawStatus("? help  ↑/↓ scroll  PgUp/PgDn page  g/G top/bottom  r refresh  . cluster settings  b/Esc back  q quit")
+		a.screen.Show()
+
+		ev := a.screen.PollEvent()
+		ke, ok := ev.(*tcell.EventKey)
+		if !ok {
+			continue
+		}
+		switch {
+		case ke.Key() == tcell.KeyRune && ke.Rune() == '?':
+			a.helpScreen()
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'q':
+			panic(quitSignal{})
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'b', ke.Key() == tcell.KeyEscape:
+			return connectionChanged
+		case ke.Key() == tcell.KeyUp, ke.Key() == tcell.KeyRune && ke.Rune() == 'k':
+			top--
+		case ke.Key() == tcell.KeyDown, ke.Key() == tcell.KeyRune && ke.Rune() == 'j':
+			top++
+		case ke.Key() == tcell.KeyPgUp:
+			top -= bodyHeight
+		case ke.Key() == tcell.KeyPgDn:
+			top += bodyHeight
+		case ke.Key() == tcell.KeyHome, ke.Key() == tcell.KeyRune && ke.Rune() == 'g':
+			top = 0
+		case ke.Key() == tcell.KeyEnd, ke.Key() == tcell.KeyRune && ke.Rune() == 'G':
+			top = maxTop
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'r':
+			reload()
+		case ke.Key() == tcell.KeyRune && ke.Rune() == '.':
+			if a.settingsScreen() {
+				connectionChanged = true
+				reload()
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1210,7 +1339,7 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 				util.AsStr(r["docs.count"]),
 				util.AsStr(r["store.size"]))
 		})
-		a.drawStatus("? help  ↑/↓ move  Enter open  / filter  h hidden  r refresh  S settings  q quit")
+		a.drawStatus("? help  ↑/↓ move  Enter open  / filter  h hidden  r refresh  S index details  . settings  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -1254,6 +1383,12 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 				a.status.set("hidden indices hidden")
 			}
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'S':
+			if st.length > 0 {
+				if a.indexDetailsScreen(util.AsStr(items[st.cursor]["index"])) {
+					reload()
+				}
+			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == '.':
 			if a.settingsScreen() {
 				reload()
 			}
@@ -1315,7 +1450,7 @@ func (a *app) docsScreen(ctx *docsContext) {
 		a.drawList(bodyTop, bodyHeight, maxX, st, func(i int) string {
 			return renderDocRow(items[i])
 		})
-		a.drawStatus("? help  Enter/v view  e edit  d delete  / filter  f query  n/p page  s size  r refresh  S settings  b back  q quit")
+		a.drawStatus("? help  Enter/v view  e edit  d delete  / filter  f query  n/p page  s size  r refresh  S index details  . settings  b back  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -1387,6 +1522,12 @@ func (a *app) docsScreen(ctx *docsContext) {
 				}
 			}
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'S':
+			if a.indexDetailsScreen(ctx.index) {
+				ctx.from = 0
+				st.home()
+				reload()
+			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == '.':
 			if a.settingsScreen() {
 				ctx.from = 0
 				st.home()
@@ -1423,7 +1564,7 @@ func (a *app) viewDocScreen(index string, hit map[string]any) {
 			}
 			a.drawText(0, bodyTop+i, styleDefault, util.Clip(lines[li], maxX))
 		}
-		a.drawStatus("? help  ↑/↓ scroll  PgUp/PgDn page  g/G top/bot  e edit  d delete  S settings  b/Esc back  q quit")
+		a.drawStatus("? help  ↑/↓ scroll  PgUp/PgDn page  g/G top/bot  e edit  d delete  S index details  . settings  b/Esc back  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -1469,6 +1610,10 @@ func (a *app) viewDocScreen(index string, hit map[string]any) {
 				return
 			}
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'S':
+			if a.indexDetailsScreen(index) {
+				return
+			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == '.':
 			if a.settingsScreen() {
 				return
 			}
