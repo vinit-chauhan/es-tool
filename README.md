@@ -104,8 +104,12 @@ Keys:
 | Indices  | `↑/↓` `j/k` move · `Enter` open · `/` filter · `r` refresh · `S` settings · `q` quit                                                                                       |
 | Docs     | `↑/↓` page nav · `Enter`/`v` view · `e` edit · `d` delete · `/` filter · `f` Lucene query · `n/p` page · `s` size · `r` refresh · `S` settings · `b`/`Esc` back · `q` quit |
 | Viewer   | `↑/↓` `PgUp/PgDn` `g/G` scroll · `e` edit · `d` delete · `S` settings · `b`/`Esc` back · `q` quit                                                                          |
-| Settings | `↑/↓` `j/k` move · `Enter` use cluster · `a` add · `e` edit · `b`/`Esc` back · `q` quit                                                                                    |
+| Settings | `↑/↓` `j/k` move · `Enter` use cluster · `a` add · `e` edit · `r` refresh health · `b`/`Esc` back · `q` quit                                                               |
 
+- The top-right header indicator shows cluster health (`green`, `yellow`, or
+  `red`) and reports authentication or connection failures.
+- Inline setting editors support `←/→`, `Home/End`, `Backspace/Delete`, and
+  `Ctrl+U` to clear the value.
 - `e` opens the document JSON in `$EDITOR` (the TUI suspends cleanly), and writes
   it back using optimistic concurrency control (`if_seq_no`/`if_primary_term`).
 - `d` prompts before deleting and refreshes with `?refresh=true`.

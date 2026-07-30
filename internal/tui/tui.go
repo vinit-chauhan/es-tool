@@ -27,6 +27,7 @@ type app struct {
 	config        appconfig.Config
 	activeCluster string
 	settingsWarn  string
+	health        clusterHealth
 	status        statusMsg
 }
 
@@ -38,6 +39,61 @@ type statusMsg struct {
 func (s *statusMsg) set(text string)    { s.text, s.isErr = text, false }
 func (s *statusMsg) setErr(text string) { s.text, s.isErr = text, true }
 func (s *statusMsg) clear()             { s.text, s.isErr = "", false }
+
+type clusterHealthState int
+
+const (
+	healthChecking clusterHealthState = iota
+	healthGreen
+	healthYellow
+	healthRed
+	healthConnected
+	healthAuthError
+	healthUnavailable
+	healthOffline
+)
+
+type clusterHealth struct {
+	state  clusterHealthState
+	code   int
+	detail string
+}
+
+func (h clusterHealth) label() string {
+	switch h.state {
+	case healthGreen:
+		return "CLUSTER GREEN"
+	case healthYellow:
+		return "CLUSTER YELLOW"
+	case healthRed:
+		return "CLUSTER RED"
+	case healthConnected:
+		return "CLUSTER CONNECTED"
+	case healthAuthError:
+		return fmt.Sprintf("CLUSTER AUTH %d", h.code)
+	case healthUnavailable:
+		return fmt.Sprintf("HEALTH HTTP %d", h.code)
+	case healthOffline:
+		return "CLUSTER OFFLINE"
+	default:
+		return "CLUSTER CHECKING"
+	}
+}
+
+func (h clusterHealth) style() tcell.Style {
+	color := tcell.ColorGray
+	switch h.state {
+	case healthGreen:
+		color = tcell.ColorGreen
+	case healthYellow, healthUnavailable:
+		color = tcell.ColorYellow
+	case healthRed, healthAuthError, healthOffline:
+		color = tcell.ColorRed
+	case healthConnected:
+		color = tcell.ColorBlue
+	}
+	return styleHeader.Foreground(color)
+}
 
 // quitSignal unwinds nested screens when the user presses 'q'.
 type quitSignal struct{}
@@ -151,20 +207,25 @@ func (a *app) drawHeader(title, subtitle string) {
 		bar += " — " + subtitle
 	}
 	a.drawBar(0, styleHeader, bar)
+	maxX, _ := a.size()
+	health := " " + a.health.label() + " "
+	healthWidth := len([]rune(health))
+	a.drawText(max(0, maxX-healthWidth), 0, a.health.style(), health)
 }
 
 func (a *app) drawStatus(hint string) {
 	_, maxY := a.size()
-	line := maxY - 1
-	a.clearLine(line)
+	statusLine := maxY - 2
+	hintLine := maxY - 1
+	a.clearLine(statusLine)
+	a.clearLine(hintLine)
+	a.drawText(0, hintLine, styleDim, hint)
 	if a.status.text != "" {
 		st := styleBold
 		if a.status.isErr {
 			st = styleErr
 		}
-		a.drawText(0, line, st, a.status.text)
-	} else {
-		a.drawText(0, line, styleDim, hint)
+		a.drawText(0, statusLine, st, a.status.text)
 	}
 }
 
@@ -172,8 +233,8 @@ func (a *app) drawStatus(hint string) {
 // Prompt / confirm
 // ---------------------------------------------------------------------------
 
-// prompt shows an inline single-line editor at the bottom row. It returns the
-// entered text and ok=false if the user pressed Esc.
+// prompt shows an inline single-line editor above the hotkey row. It returns
+// the entered text and ok=false if the user pressed Esc.
 func (a *app) prompt(label, initial string) (string, bool) {
 	return a.promptValue(label, initial, false)
 }
@@ -184,19 +245,34 @@ func (a *app) promptSecret(label, initial string) (string, bool) {
 }
 
 func (a *app) promptValue(label, initial string, masked bool) (string, bool) {
-	_, maxY := a.size()
-	line := maxY - 1
 	buf := []rune(initial)
+	cursor := len(buf)
 
 	for {
+		maxX, maxY := a.size()
+		line := maxY - 2
+		hintLine := maxY - 1
 		a.clearLine(line)
+		a.clearLine(hintLine)
+		a.drawText(0, hintLine, styleDim, "←/→ cursor  Home/End  Backspace/Del edit  Ctrl+U clear  Enter apply  Esc cancel")
 		a.drawText(0, line, styleBold, label)
-		value := string(buf)
-		if masked {
-			value = strings.Repeat("*", len(buf))
+
+		labelWidth := len([]rune(label))
+		inputX := min(labelWidth, max(0, maxX-1))
+		available := max(1, maxX-inputX)
+		start := 0
+		if cursor >= available {
+			start = cursor - available + 1
 		}
-		a.drawText(len(label), line, styleDefault, value)
-		a.screen.ShowCursor(len(label)+len(buf), line)
+		end := min(len(buf), start+available)
+		visible := buf[start:end]
+		value := string(visible)
+		if masked {
+			value = strings.Repeat("*", len(visible))
+		}
+		a.drawText(inputX, line, styleDefault, value)
+		cursorX := min(maxX-1, inputX+cursor-start)
+		a.screen.ShowCursor(cursorX, line)
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -212,13 +288,32 @@ func (a *app) promptValue(label, initial string, masked bool) (string, bool) {
 			a.screen.HideCursor()
 			return string(buf), true
 		case tcell.KeyBackspace, tcell.KeyBackspace2:
-			if len(buf) > 0 {
+			if cursor > 0 {
+				copy(buf[cursor-1:], buf[cursor:])
+				buf = buf[:len(buf)-1]
+				cursor--
+			}
+		case tcell.KeyDelete:
+			if cursor < len(buf) {
+				copy(buf[cursor:], buf[cursor+1:])
 				buf = buf[:len(buf)-1]
 			}
+		case tcell.KeyLeft:
+			cursor = max(0, cursor-1)
+		case tcell.KeyRight:
+			cursor = min(len(buf), cursor+1)
+		case tcell.KeyHome, tcell.KeyCtrlA:
+			cursor = 0
+		case tcell.KeyEnd, tcell.KeyCtrlE:
+			cursor = len(buf)
 		case tcell.KeyCtrlU:
 			buf = buf[:0]
+			cursor = 0
 		case tcell.KeyRune:
-			buf = append(buf, ke.Rune())
+			buf = append(buf, 0)
+			copy(buf[cursor+1:], buf[cursor:])
+			buf[cursor] = ke.Rune()
+			cursor++
 		}
 	}
 }
@@ -292,6 +387,47 @@ type docsContext struct {
 	size       int
 	from       int
 	total      int
+}
+
+func clusterHealthFromResponse(status int, body any, requestErr error) clusterHealth {
+	if requestErr != nil {
+		return clusterHealth{state: healthOffline, detail: requestErr.Error()}
+	}
+	if status == 401 {
+		return clusterHealth{state: healthAuthError, code: status}
+	}
+	if status == 403 {
+		return clusterHealth{state: healthUnavailable, code: status}
+	}
+	if response, ok := body.(map[string]any); ok {
+		switch strings.ToLower(util.AsStr(response["status"])) {
+		case "green":
+			return clusterHealth{state: healthGreen}
+		case "yellow":
+			return clusterHealth{state: healthYellow}
+		case "red":
+			return clusterHealth{state: healthRed}
+		}
+	}
+	if status >= 300 {
+		return clusterHealth{state: healthUnavailable, code: status}
+	}
+	return clusterHealth{state: healthConnected}
+}
+
+func (a *app) refreshHealth() bool {
+	status, body, err := a.client.Request("GET", "/_cluster/health", nil,
+		map[string]string{"filter_path": "status"})
+	a.health = clusterHealthFromResponse(status, body, err)
+	return err == nil
+}
+
+func (a *app) updateHealthAfterRequest(requestErr error) {
+	if requestErr != nil && strings.HasPrefix(requestErr.Error(), "connection error:") {
+		a.health = clusterHealth{state: healthOffline, detail: requestErr.Error()}
+		return
+	}
+	a.refreshHealth()
 }
 
 func (a *app) fetchIndices() ([]map[string]any, error) {
@@ -438,6 +574,7 @@ func (a *app) configureClient(cluster appconfig.Cluster) {
 		Password:  cluster.Password,
 		VerifyTLS: cluster.VerifyTLS,
 	})
+	a.health = clusterHealth{state: healthChecking}
 }
 
 func clusterAuthMode(cluster appconfig.Cluster) string {
@@ -734,7 +871,7 @@ func (a *app) settingsScreen() (connectionChanged bool) {
 		a.drawText(0, 2, styleUnder, util.Clip(fmt.Sprintf("  %-20s  %-44s  %-9s  %s", "name", "URL", "auth", "TLS"), maxX))
 
 		bodyTop := 3
-		bodyHeight := max(1, maxY-bodyTop-1)
+		bodyHeight := max(1, maxY-bodyTop-2)
 		if st.length == 0 {
 			a.drawText(2, bodyTop+1, styleDim, "No saved clusters. Press a to add one.")
 		} else {
@@ -756,7 +893,7 @@ func (a *app) settingsScreen() (connectionChanged bool) {
 					tls)
 			})
 		}
-		a.drawStatus("↑/↓ move  Enter use  a add  e edit  b/Esc back  q quit")
+		a.drawStatus("↑/↓ move  Enter use  a add  e edit  r health  b/Esc back  q quit")
 		a.screen.Show()
 
 		ev := a.screen.PollEvent()
@@ -783,6 +920,7 @@ func (a *app) settingsScreen() (connectionChanged bool) {
 			st.end(bodyHeight)
 		case ke.Key() == tcell.KeyEnter:
 			if st.length > 0 && a.activateSavedCluster(a.config.Clusters[st.cursor].Name) {
+				a.refreshHealth()
 				connectionChanged = true
 			}
 		case ke.Key() == tcell.KeyRune && ke.Rune() == 'a':
@@ -795,6 +933,7 @@ func (a *app) settingsScreen() (connectionChanged bool) {
 			}
 			if cluster, saved := a.editClusterScreen(initial, ""); saved {
 				if a.saveCluster("", cluster) {
+					a.refreshHealth()
 					connectionChanged = true
 				}
 				st.length = len(a.config.Clusters)
@@ -805,9 +944,16 @@ func (a *app) settingsScreen() (connectionChanged bool) {
 				cluster := a.config.Clusters[st.cursor]
 				if edited, saved := a.editClusterScreen(cluster, cluster.Name); saved {
 					if a.saveCluster(cluster.Name, edited) {
+						a.refreshHealth()
 						connectionChanged = true
 					}
 				}
+			}
+		case ke.Key() == tcell.KeyRune && ke.Rune() == 'r':
+			if a.refreshHealth() {
+				a.status.set("cluster health refreshed")
+			} else {
+				a.status.setErr("cluster health check failed: " + a.health.detail)
 			}
 		}
 	}
@@ -830,6 +976,7 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 	}
 	reload := func() {
 		v, err := a.fetchIndices()
+		a.updateHealthAfterRequest(err)
 		if err != nil {
 			a.status.setErr("failed to fetch indices: " + err.Error())
 			rawItems = nil
@@ -854,7 +1001,7 @@ func (a *app) indicesScreen() (selected string, quit bool) {
 		a.drawText(0, 2, styleUnder, util.Clip(colHdr, maxX))
 
 		bodyTop := 3
-		bodyHeight := maxY - bodyTop - 1
+		bodyHeight := maxY - bodyTop - 2
 		a.drawList(bodyTop, bodyHeight, maxX, st, func(i int) string {
 			r := items[i]
 			return fmt.Sprintf("%-6s  %-40s  %10s  %10s",
@@ -921,6 +1068,7 @@ func (a *app) docsScreen(ctx *docsContext) {
 	}
 	reload := func() {
 		v, err := a.fetchDocs(ctx)
+		a.updateHealthAfterRequest(err)
 		if err != nil {
 			a.status.setErr("search failed: " + err.Error())
 			rawHits = nil
@@ -952,7 +1100,7 @@ func (a *app) docsScreen(ctx *docsContext) {
 		a.drawText(0, 2, styleUnder, util.Clip(fmt.Sprintf("%-40s  preview", "_id"), maxX))
 
 		bodyTop := 3
-		bodyHeight := maxY - bodyTop - 1
+		bodyHeight := maxY - bodyTop - 2
 		a.drawList(bodyTop, bodyHeight, maxX, st, func(i int) string {
 			return renderDocRow(items[i])
 		})
@@ -1053,7 +1201,7 @@ func (a *app) viewDocScreen(index string, hit map[string]any) {
 		maxX, maxY := a.size()
 		a.drawHeader(index+" / "+docID, fmt.Sprintf("%d lines", len(lines)))
 		bodyTop := 2
-		bodyHeight := maxY - bodyTop - 1
+		bodyHeight := maxY - bodyTop - 2
 		top = max(0, min(top, max(0, len(lines)-bodyHeight)))
 		for i := 0; i < bodyHeight; i++ {
 			li := top + i

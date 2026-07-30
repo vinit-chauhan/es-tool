@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gdamore/tcell/v2"
 
 	appconfig "github.com/vinit-chauhan/es-tool/internal/config"
 	"github.com/vinit-chauhan/es-tool/internal/esclient"
@@ -78,4 +81,156 @@ func TestSaveClusterAddsAndActivatesProfile(t *testing.T) {
 	if loaded.Active != "production" || len(loaded.Clusters) != 1 {
 		t.Fatalf("saved config = %#v", loaded)
 	}
+}
+
+func TestDrawStatusKeepsHotkeysOnBottomLine(t *testing.T) {
+	screen := newSimulationScreen(t)
+	a := &app{screen: screen}
+	a.status.set("cluster saved")
+
+	a.drawStatus("S settings  q quit")
+	screen.Show()
+
+	if got := simulationRow(screen, 8); got != "cluster saved" {
+		t.Fatalf("notification row = %q", got)
+	}
+	if got := simulationRow(screen, 9); got != "S settings  q quit" {
+		t.Fatalf("hotkey row = %q", got)
+	}
+}
+
+func TestClusterHealthFromResponse(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		body      any
+		err       error
+		wantState clusterHealthState
+		wantCode  int
+	}{
+		{
+			name:      "green",
+			status:    200,
+			body:      map[string]any{"status": "green"},
+			wantState: healthGreen,
+		},
+		{
+			name:      "yellow",
+			status:    200,
+			body:      map[string]any{"status": "yellow"},
+			wantState: healthYellow,
+		},
+		{
+			name:      "red",
+			status:    200,
+			body:      map[string]any{"status": "red"},
+			wantState: healthRed,
+		},
+		{
+			name:      "connected without health",
+			status:    200,
+			body:      map[string]any{},
+			wantState: healthConnected,
+		},
+		{
+			name:      "unauthorized",
+			status:    401,
+			wantState: healthAuthError,
+			wantCode:  401,
+		},
+		{
+			name:      "health forbidden",
+			status:    403,
+			wantState: healthUnavailable,
+			wantCode:  403,
+		},
+		{
+			name:      "health endpoint failure",
+			status:    503,
+			wantState: healthUnavailable,
+			wantCode:  503,
+		},
+		{
+			name:      "offline",
+			err:       errors.New("connection refused"),
+			wantState: healthOffline,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := clusterHealthFromResponse(tt.status, tt.body, tt.err)
+			if got.state != tt.wantState || got.code != tt.wantCode {
+				t.Fatalf("health = %#v, want state %v code %d", got, tt.wantState, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestDrawHeaderShowsHealthAtTopRight(t *testing.T) {
+	screen := newSimulationScreen(t)
+	a := &app{
+		screen: screen,
+		health: clusterHealth{state: healthGreen},
+	}
+
+	a.drawHeader("Indices", "http://localhost:9200")
+	screen.Show()
+
+	if got := simulationRow(screen, 0); !strings.HasSuffix(got, "CLUSTER GREEN") {
+		t.Fatalf("header row = %q", got)
+	}
+}
+
+func TestPromptValueSupportsCursorEditing(t *testing.T) {
+	screen := newSimulationScreen(t)
+	a := &app{screen: screen}
+	events := []*tcell.EventKey{
+		tcell.NewEventKey(tcell.KeyLeft, 0, tcell.ModNone),
+		tcell.NewEventKey(tcell.KeyLeft, 0, tcell.ModNone),
+		tcell.NewEventKey(tcell.KeyRune, 'X', tcell.ModNone),
+		tcell.NewEventKey(tcell.KeyDelete, 0, tcell.ModNone),
+		tcell.NewEventKey(tcell.KeyHome, 0, tcell.ModNone),
+		tcell.NewEventKey(tcell.KeyRune, 'Z', tcell.ModNone),
+		tcell.NewEventKey(tcell.KeyEnd, 0, tcell.ModNone),
+		tcell.NewEventKey(tcell.KeyBackspace2, 0, tcell.ModNone),
+		tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone),
+	}
+	posted := make(chan struct{})
+	go func() {
+		defer close(posted)
+		for _, event := range events {
+			screen.PostEventWait(event)
+		}
+	}()
+
+	got, ok := a.prompt("value: ", "abcd")
+	<-posted
+	if !ok {
+		t.Fatal("prompt() was cancelled")
+	}
+	if got != "ZabX" {
+		t.Fatalf("prompt() = %q, want ZabX", got)
+	}
+}
+
+func newSimulationScreen(t *testing.T) tcell.SimulationScreen {
+	t.Helper()
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	screen.SetSize(80, 10)
+	t.Cleanup(screen.Fini)
+	return screen
+}
+
+func simulationRow(screen tcell.SimulationScreen, y int) string {
+	width, _ := screen.Size()
+	row := make([]rune, 0, width)
+	for x := 0; x < width; x++ {
+		mainc, _, _, _ := screen.GetContent(x, y)
+		row = append(row, mainc)
+	}
+	return strings.TrimSpace(string(row))
 }
