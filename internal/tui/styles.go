@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -20,6 +21,10 @@ type theme struct {
 	status      lipgloss.Style
 	statusError lipgloss.Style
 	key         lipgloss.Style
+	jsonString  lipgloss.Style
+	jsonNumber  lipgloss.Style
+	jsonBool    lipgloss.Style
+	match       lipgloss.Style
 }
 
 var styles = theme{
@@ -57,6 +62,78 @@ var styles = theme{
 	key: lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.AdaptiveColor{Light: "#3A3A9A", Dark: "#B6B7FF"}),
+	jsonString: lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#19733B", Dark: "#5EE391"}),
+	jsonNumber: lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#0B5FA5", Dark: "#7FC4FF"}),
+	jsonBool: lipgloss.NewStyle().
+		Foreground(lipgloss.AdaptiveColor{Light: "#8A6300", Dark: "#FFD166"}),
+	match: lipgloss.NewStyle().
+		Bold(true).
+		Underline(true).
+		Foreground(lipgloss.AdaptiveColor{Light: "#A82032", Dark: "#FF6B7A"}),
+}
+
+// highlightMatch underlines the first case-insensitive occurrence of filter
+// within text, for filtered index/document lists. Empty filter or no match
+// returns text unchanged.
+func highlightMatch(text, filter string) string {
+	if filter == "" {
+		return text
+	}
+	idx := strings.Index(strings.ToLower(text), strings.ToLower(filter))
+	if idx < 0 {
+		return text
+	}
+	return text[:idx] + styles.match.Render(text[idx:idx+len(filter)]) + text[idx+len(filter):]
+}
+
+var (
+	jsonKeyLineRe  = regexp.MustCompile(`^"((?:[^"\\]|\\.)*)":\s*(.*)$`)
+	jsonStringRe   = regexp.MustCompile(`^"((?:[^"\\]|\\.)*)"(,?)$`)
+	jsonBoolNullRe = regexp.MustCompile(`^(true|false|null)(,?)$`)
+	jsonNumberRe   = regexp.MustCompile(`^(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(,?)$`)
+)
+
+// highlightJSON colors keys, strings, numbers, and booleans/null in
+// pretty-printed JSON produced by util.Dump, one line at a time so ANSI
+// escapes from an earlier pass are never re-matched by a later regex.
+func highlightJSON(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = highlightJSONLine(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func highlightJSONLine(line string) string {
+	indentLen := len(line) - len(strings.TrimLeft(line, " "))
+	indent := line[:indentLen]
+	rest := line[indentLen:]
+	if rest == "" {
+		return line
+	}
+	if m := jsonKeyLineRe.FindStringSubmatch(rest); m != nil {
+		key := styles.key.Render(`"`+m[1]+`"`) + ":"
+		return indent + key + " " + highlightJSONValue(m[2])
+	}
+	return indent + highlightJSONValue(rest)
+}
+
+func highlightJSONValue(value string) string {
+	switch {
+	case jsonStringRe.MatchString(value):
+		m := jsonStringRe.FindStringSubmatch(value)
+		return styles.jsonString.Render(`"`+m[1]+`"`) + m[2]
+	case jsonBoolNullRe.MatchString(value):
+		m := jsonBoolNullRe.FindStringSubmatch(value)
+		return styles.jsonBool.Render(m[1]) + m[2]
+	case jsonNumberRe.MatchString(value):
+		m := jsonNumberRe.FindStringSubmatch(value)
+		return styles.jsonNumber.Render(m[1]) + m[2]
+	default:
+		return value
+	}
 }
 
 func renderHeader(title, subtitle string, health healthStatus, width int) string {
@@ -95,15 +172,77 @@ func renderFooter(status notification, hint string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
+type helpSection struct {
+	title string
+	rows  [][2]string
+}
+
+var helpSections = []helpSection{
+	{title: "Global", rows: [][2]string{
+		{"?", "toggle this help"},
+		{"ctrl+c / q", "quit"},
+		{".", "cluster settings"},
+		{"b / esc", "back"},
+	}},
+	{title: "Indices", rows: [][2]string{
+		{"enter", "open index"},
+		{"/", "filter"},
+		{"h", "toggle hidden indices"},
+		{"S", "index details"},
+		{"i", "cluster info"},
+		{"r", "refresh"},
+	}},
+	{title: "Documents", rows: [][2]string{
+		{"enter", "view document"},
+		{"c", "create document"},
+		{"e", "replace document"},
+		{"u / U", "partial update / upsert"},
+		{"d / D", "delete document / delete by query"},
+		{"/", "client-side filter"},
+		{"f", "server query"},
+		{"F", "advanced search builder"},
+		{"n / p", "next / previous page"},
+	}},
+	{title: "Document viewer", rows: [][2]string{
+		{"e", "replace"},
+		{"u / U", "partial update / upsert"},
+		{"d", "delete"},
+		{"w", "toggle wrap"},
+	}},
+	{title: "Advanced search", rows: [][2]string{
+		{"f", "Lucene query"},
+		{"s", "sort"},
+		{"o", "_source filter"},
+		{"j", "raw JSON body"},
+		{"i", "IDs only"},
+		{"c", "exact count"},
+		{"x", "reset"},
+		{"enter", "run search"},
+	}},
+	{title: "Cluster settings", rows: [][2]string{
+		{"enter", "activate profile"},
+		{"a", "add profile"},
+		{"e", "edit profile"},
+		{"d", "delete profile"},
+		{"c", "quick connect"},
+		{"r", "check health"},
+	}},
+}
+
 func renderHelpOverlay(width, height int) string {
-	help := styles.title.Render("Keyboard shortcuts") + "\n\n" +
-		fmt.Sprintf("%s  open or close help\n%s  quit immediately\n%s  go back",
-			styles.key.Render("?"),
-			styles.key.Render("ctrl+c"),
-			styles.key.Render("esc / b"),
-		)
+	var body strings.Builder
+	body.WriteString(styles.title.Render("Keyboard shortcuts"))
+	body.WriteString("\n")
+	for _, section := range helpSections {
+		body.WriteString("\n")
+		body.WriteString(styles.subtitle.Render(section.title))
+		body.WriteString("\n")
+		for _, row := range section.rows {
+			fmt.Fprintf(&body, "  %-12s %s\n", styles.key.Render(row[0]), row[1])
+		}
+	}
 	return styles.panel.
-		Width(max(20, min(64, width-4))).
-		Height(max(6, min(18, height-4))).
-		Render(help)
+		Width(max(24, min(72, width-4))).
+		Height(max(6, min(height-4, lipgloss.Height(body.String())+2))).
+		Render(body.String())
 }

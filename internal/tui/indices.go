@@ -198,8 +198,8 @@ func (m *Model) receiveIndexDetails(body any) {
 		m.status = notification{text: "index details missing for " + m.currentIndex, isErr: true}
 		return
 	}
-	m.detailText[0] = util.Dump(entry["settings"])
-	m.detailText[1] = util.Dump(entry["mappings"])
+	m.detailText[0] = highlightJSON(util.Dump(entry["settings"]))
+	m.detailText[1] = highlightJSON(util.Dump(entry["mappings"]))
 	m.detailView.SetContent(m.detailText[m.detailTab])
 	m.detailView.GotoTop()
 	m.status = notification{text: "Index metadata loaded"}

@@ -96,9 +96,9 @@ func AsStr(v any) string {
 		return t
 	case bool:
 		if t {
-			return "True"
+			return "true"
 		}
-		return "False"
+		return "false"
 	default:
 		return fmt.Sprintf("%v", t)
 	}

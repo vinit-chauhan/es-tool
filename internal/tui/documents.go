@@ -242,7 +242,7 @@ func (m *Model) applyDocumentFilter() {
 			continue
 		}
 		filtered = append(filtered, hit)
-		rows = append(rows, table.Row{hit.id, documentPreview(hit.source)})
+		rows = append(rows, table.Row{highlightMatch(hit.id, filter), highlightMatch(documentPreview(hit.source), filter)})
 	}
 	m.docHits = filtered
 	m.docTable.SetRows(rows)
@@ -306,7 +306,7 @@ func (m *Model) refreshDocumentViewport() {
 	if m.wrapJSON {
 		text = wrapLines(text, max(10, m.docView.Width))
 	}
-	m.docView.SetContent(text)
+	m.docView.SetContent(highlightJSON(text))
 }
 
 func wrapLines(text string, width int) string {
