@@ -18,6 +18,7 @@ func countForDeleteCmd(m Model) tea.Cmd {
 	method, body, params := countRequest(m)
 	return requestCmd(
 		m.client,
+		m.connEpoch,
 		operationCountForDelete,
 		method,
 		"/"+url.PathEscape(m.currentIndex)+"/_count",
@@ -34,6 +35,7 @@ func deleteByQueryCmd(m Model) tea.Cmd {
 	params["refresh"] = "true"
 	return requestCmd(
 		m.client,
+		m.connEpoch,
 		operationDeleteByQuery,
 		"POST",
 		"/"+url.PathEscape(m.currentIndex)+"/_delete_by_query",

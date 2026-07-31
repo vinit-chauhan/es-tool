@@ -151,7 +151,7 @@ func (m *Model) updateSettings(msg tea.KeyMsg) tea.Cmd {
 	case "r":
 		m.loading = true
 		m.health = healthStatus{state: stateHealthChecking}
-		return tea.Batch(healthCmd(m.client), m.checkProfileHealth())
+		return tea.Batch(healthCmd(m.client, m.connEpoch), m.checkProfileHealth())
 	case "a":
 		m.openClusterEditor("", appconfig.Cluster{URL: m.client.BaseURL, VerifyTLS: true})
 	case "e":
@@ -186,13 +186,42 @@ func (m Model) selectedCluster() (appconfig.Cluster, bool) {
 }
 
 // gotoIndices switches the session to the freshly configured connection and
-// lands the user on the indices screen.
+// lands the user on the indices screen with no leftovers from the previous
+// cluster.
 func (m *Model) gotoIndices() tea.Cmd {
+	m.resetClusterState()
 	m.history = nil
 	m.screen = screenIndices
 	m.loading = true
 	m.health = healthStatus{state: stateHealthChecking}
-	return tea.Batch(healthCmd(m.client), fetchIndicesCmd(m.client, m.showHidden))
+	return tea.Batch(healthCmd(m.client, m.connEpoch), fetchIndicesCmd(*m))
+}
+
+// resetClusterState drops everything that was loaded from the previously
+// connected cluster and invalidates its in-flight responses.
+func (m *Model) resetClusterState() {
+	m.connEpoch++
+
+	m.allIndices = nil
+	m.indexTable.SetRows(nil)
+	m.indexFilter = ""
+
+	m.currentIndex = ""
+	m.allDocHits, m.docHits = nil, nil
+	m.docTable.SetRows(nil)
+	m.docFilter = ""
+	m.query, m.sort, m.source = "", "", ""
+	m.searchBody = nil
+	m.idsOnly = false
+	m.from, m.total, m.exactCount = 0, 0, 0
+	m.pendingDocID, m.pendingDeleteCount = "", 0
+
+	m.currentDoc, m.currentDocID = nil, ""
+	m.docView.SetContent("")
+	m.detailText = [2]string{}
+	m.detailView.SetContent("")
+	m.infoText = ""
+	m.infoView.SetContent("")
 }
 
 func (m *Model) activateCluster(cluster appconfig.Cluster) tea.Cmd {

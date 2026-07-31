@@ -66,6 +66,7 @@ func exactCountCmd(m Model) tea.Cmd {
 	method, body, params := countRequest(m)
 	return requestCmd(
 		m.client,
+		m.connEpoch,
 		operationExactCount,
 		method,
 		"/"+url.PathEscape(m.currentIndex)+"/_count",

@@ -11,6 +11,7 @@ import (
 
 type requestMsg struct {
 	operation string
+	epoch     int
 	status    int
 	body      any
 	err       error
@@ -18,8 +19,12 @@ type requestMsg struct {
 
 type healthMsg requestMsg
 
+// requestCmd stamps the response with the connection epoch that was active
+// when the request started, so answers from a previously connected cluster
+// can be recognized and dropped after a switch.
 func requestCmd(
 	client *esclient.Client,
+	epoch int,
 	operation string,
 	method string,
 	path string,
@@ -30,6 +35,7 @@ func requestCmd(
 		status, response, err := client.Request(method, path, body, params)
 		return requestMsg{
 			operation: operation,
+			epoch:     epoch,
 			status:    status,
 			body:      response,
 			err:       requestError(status, response, err),
@@ -37,10 +43,10 @@ func requestCmd(
 	}
 }
 
-func healthCmd(client *esclient.Client) tea.Cmd {
+func healthCmd(client *esclient.Client, epoch int) tea.Cmd {
 	return func() tea.Msg {
 		status, body, err := client.Request("GET", "/_cluster/health", nil, nil)
-		return healthMsg{operation: "health", status: status, body: body, err: err}
+		return healthMsg{operation: "health", epoch: epoch, status: status, body: body, err: err}
 	}
 }
 

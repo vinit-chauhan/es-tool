@@ -46,6 +46,44 @@ func TestEditorDirtyDetection(t *testing.T) {
 	}
 }
 
+func TestResetClusterStateDropsPreviousClusterData(t *testing.T) {
+	m := testModel(t, 100, 30)
+	m.receiveIndices([]any{
+		map[string]any{"health": "green", "status": "open", "index": "old-index", "docs.count": "1", "store.size": "1kb"},
+	})
+	m.currentIndex = "old-index"
+	m.query = "status:running"
+	m.total = 42
+	m.currentDocID = "doc-1"
+	oldEpoch := m.connEpoch
+
+	m.resetClusterState()
+
+	if m.connEpoch == oldEpoch {
+		t.Fatal("resetClusterState must advance the connection epoch")
+	}
+	if len(m.indexTable.Rows()) != 0 || m.allIndices != nil {
+		t.Error("index list from the previous cluster must be cleared")
+	}
+	if m.currentIndex != "" || m.query != "" || m.total != 0 || m.currentDocID != "" {
+		t.Error("document state from the previous cluster must be cleared")
+	}
+
+	// A slow response from the previous cluster must be ignored.
+	updated, _ := m.Update(requestMsg{
+		operation: operationIndices,
+		epoch:     oldEpoch,
+		status:    200,
+		body: []any{
+			map[string]any{"health": "green", "status": "open", "index": "stale-index", "docs.count": "9", "store.size": "9kb"},
+		},
+	})
+	m = updated.(Model)
+	if len(m.indexTable.Rows()) != 0 {
+		t.Error("a response stamped with the old epoch must not repopulate the table")
+	}
+}
+
 func TestProfileHealthLabel(t *testing.T) {
 	m := Model{profileHealth: map[string]healthStatus{
 		"green":    {state: stateHealthGreen},

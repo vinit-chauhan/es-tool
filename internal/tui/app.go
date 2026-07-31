@@ -66,6 +66,11 @@ type Model struct {
 	config        appconfig.Config
 	activeCluster string
 
+	// connEpoch increments every time the connection is switched to another
+	// cluster; responses stamped with an older epoch are discarded so a slow
+	// previous cluster can never repopulate the screen with stale data.
+	connEpoch int
+
 	screen  screenKind
 	history []screenKind
 	width   int
@@ -207,9 +212,9 @@ func configureClient(client *esclient.Client, cluster appconfig.Cluster) {
 }
 
 func (m Model) Init() tea.Cmd {
-	commands := []tea.Cmd{m.spinner.Tick, healthCmd(m.client)}
+	commands := []tea.Cmd{m.spinner.Tick, healthCmd(m.client, m.connEpoch)}
 	if m.screen == screenIndices {
-		commands = append(commands, fetchIndicesCmd(m.client, m.showHidden))
+		commands = append(commands, fetchIndicesCmd(m))
 	} else if m.screen == screenDocuments {
 		commands = append(commands, fetchDocumentsCmd(m))
 	}
@@ -227,9 +232,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		commands = append(commands, cmd)
 	case healthMsg:
+		if msg.epoch != m.connEpoch {
+			return m, nil
+		}
 		m.loading = false
 		m.health = healthFromResponse(msg.status, msg.body, msg.err)
 	case requestMsg:
+		if msg.epoch != m.connEpoch {
+			return m, nil
+		}
 		m.loading = false
 		if msg.err != nil {
 			m.status = notification{text: msg.err.Error(), isErr: true}
@@ -245,6 +256,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			commands = append(commands, cmd)
 		}
 	case clusterInfoMsg:
+		if msg.epoch != m.connEpoch {
+			return m, nil
+		}
 		m.loading = false
 		m.receiveClusterInfo(msg)
 	case profileHealthMsg:
@@ -374,7 +388,7 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = notification{text: "Delete cancelled: document id did not match", isErr: true}
 			} else {
 				m.loading = true
-				return m, deleteDocumentCmd(m.client, m.currentIndex, m.pendingDocID)
+				return m, deleteDocumentCmd(m, m.currentIndex, m.pendingDocID)
 			}
 		case promptClusterName:
 			m.editingCluster.Name = value
@@ -613,7 +627,7 @@ func (m *Model) handleResponse(msg requestMsg) tea.Cmd {
 		if m.screen == screenDocument {
 			return tea.Batch(
 				fetchDocumentsCmd(*m),
-				getDocumentCmd(m.client, m.currentIndex, m.currentDocID, operationGetDocument),
+				getDocumentCmd(*m, m.currentIndex, m.currentDocID, operationGetDocument),
 			)
 		}
 		return fetchDocumentsCmd(*m)
@@ -631,7 +645,7 @@ func (m *Model) handleResponse(msg requestMsg) tea.Cmd {
 		if m.screen == screenDocument {
 			return tea.Batch(
 				fetchDocumentsCmd(*m),
-				getDocumentCmd(m.client, m.currentIndex, m.currentDocID, operationGetDocument),
+				getDocumentCmd(*m, m.currentIndex, m.currentDocID, operationGetDocument),
 			)
 		}
 		return fetchDocumentsCmd(*m)

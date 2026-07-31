@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/vinit-chauhan/es-tool/internal/esclient"
 	"github.com/vinit-chauhan/es-tool/internal/util"
 )
 
@@ -52,21 +51,22 @@ func (m *Model) setIndexColumns() {
 	m.indexTable.SetColumns(indexColumns(max(30, m.width)))
 }
 
-func fetchIndicesCmd(client *esclient.Client, showHidden bool) tea.Cmd {
+func fetchIndicesCmd(m Model) tea.Cmd {
 	expand := "open,closed"
-	if showHidden {
+	if m.showHidden {
 		expand = "all"
 	}
-	return requestCmd(client, operationIndices, "GET", "/_cat/indices", nil, map[string]string{
+	return requestCmd(m.client, m.connEpoch, operationIndices, "GET", "/_cat/indices", nil, map[string]string{
 		"format":           "json",
 		"v":                "true",
 		"expand_wildcards": expand,
 	})
 }
 
-func fetchIndexDetailsCmd(client *esclient.Client, index string) tea.Cmd {
+func fetchIndexDetailsCmd(m Model, index string) tea.Cmd {
 	return requestCmd(
-		client,
+		m.client,
+		m.connEpoch,
 		operationIndexDetails,
 		"GET",
 		"/"+url.PathEscape(index),
@@ -80,11 +80,11 @@ func (m *Model) updateIndices(msg tea.KeyMsg) tea.Cmd {
 	case "r":
 		m.loading = true
 		m.status = notification{text: "Refreshing indices"}
-		return fetchIndicesCmd(m.client, m.showHidden)
+		return fetchIndicesCmd(*m)
 	case "h":
 		m.showHidden = !m.showHidden
 		m.loading = true
-		return fetchIndicesCmd(m.client, m.showHidden)
+		return fetchIndicesCmd(*m)
 	case "/":
 		return m.openPrompt(promptIndexFilter, "Filter indices:", m.indexFilter)
 	case "enter":
@@ -102,12 +102,12 @@ func (m *Model) updateIndices(msg tea.KeyMsg) tea.Cmd {
 			m.detailTab = 0
 			m.loading = true
 			m.pushScreen(screenIndexDetails)
-			return fetchIndexDetailsCmd(m.client, index)
+			return fetchIndexDetailsCmd(*m, index)
 		}
 	case "c":
 		m.pushScreen(screenClusterInfo)
 		m.loading = true
-		return fetchClusterInfoCmd(m.client)
+		return fetchClusterInfoCmd(*m)
 	default:
 		var cmd tea.Cmd
 		m.indexTable, cmd = m.indexTable.Update(msg)
@@ -126,7 +126,7 @@ func (m *Model) updateIndexDetails(msg tea.KeyMsg) tea.Cmd {
 		m.detailView.GotoTop()
 	case "r":
 		m.loading = true
-		return fetchIndexDetailsCmd(m.client, m.currentIndex)
+		return fetchIndexDetailsCmd(*m, m.currentIndex)
 	default:
 		var cmd tea.Cmd
 		m.detailView, cmd = m.detailView.Update(msg)

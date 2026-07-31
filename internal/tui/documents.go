@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/vinit-chauhan/es-tool/internal/esclient"
 	"github.com/vinit-chauhan/es-tool/internal/util"
 )
 
@@ -57,6 +56,7 @@ func fetchDocumentsCmd(m Model) tea.Cmd {
 	method, body, params := searchRequest(m)
 	return requestCmd(
 		m.client,
+		m.connEpoch,
 		operationDocuments,
 		method,
 		"/"+url.PathEscape(m.currentIndex)+"/_search",
@@ -65,9 +65,10 @@ func fetchDocumentsCmd(m Model) tea.Cmd {
 	)
 }
 
-func getDocumentCmd(client *esclient.Client, index, id, operation string) tea.Cmd {
+func getDocumentCmd(m Model, index, id, operation string) tea.Cmd {
 	return requestCmd(
-		client,
+		m.client,
+		m.connEpoch,
 		operation,
 		"GET",
 		"/"+url.PathEscape(index)+"/_doc/"+url.PathEscape(id),
@@ -76,9 +77,10 @@ func getDocumentCmd(client *esclient.Client, index, id, operation string) tea.Cm
 	)
 }
 
-func deleteDocumentCmd(client *esclient.Client, index, id string) tea.Cmd {
+func deleteDocumentCmd(m Model, index, id string) tea.Cmd {
 	return requestCmd(
-		client,
+		m.client,
+		m.connEpoch,
 		operationDeleteDocument,
 		"DELETE",
 		"/"+url.PathEscape(index)+"/_doc/"+url.PathEscape(id),
@@ -121,13 +123,13 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 			m.currentDocID = hit.id
 			m.loading = true
 			m.pushScreen(screenDocument)
-			return getDocumentCmd(m.client, m.currentIndex, hit.id, operationGetDocument)
+			return getDocumentCmd(*m, m.currentIndex, hit.id, operationGetDocument)
 		}
 	case "e":
 		if hit, ok := m.selectedDocument(); ok {
 			m.currentDocID = hit.id
 			m.loading = true
-			return getDocumentCmd(m.client, m.currentIndex, hit.id, operationGetDocumentForEdit)
+			return getDocumentCmd(*m, m.currentIndex, hit.id, operationGetDocumentForEdit)
 		}
 	case "a":
 		return m.openPrompt(promptCreateDocumentID, "Document ID (blank for auto-generated):", "")
@@ -154,7 +156,7 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 		m.detailTab = 0
 		m.loading = true
 		m.pushScreen(screenIndexDetails)
-		return fetchIndexDetailsCmd(m.client, m.currentIndex)
+		return fetchIndexDetailsCmd(*m, m.currentIndex)
 	default:
 		var cmd tea.Cmd
 		m.docTable, cmd = m.docTable.Update(msg)
@@ -169,10 +171,10 @@ func (m *Model) updateDocumentView(msg tea.KeyMsg) tea.Cmd {
 		m.popScreen()
 	case "r":
 		m.loading = true
-		return getDocumentCmd(m.client, m.currentIndex, m.currentDocID, operationGetDocument)
+		return getDocumentCmd(*m, m.currentIndex, m.currentDocID, operationGetDocument)
 	case "e":
 		m.loading = true
-		return getDocumentCmd(m.client, m.currentIndex, m.currentDocID, operationGetDocumentForEdit)
+		return getDocumentCmd(*m, m.currentIndex, m.currentDocID, operationGetDocumentForEdit)
 	case "u", "U":
 		return m.openPartialUpdateEditor(m.currentDocID, msg.String() == "U")
 	case "d":
@@ -185,7 +187,7 @@ func (m *Model) updateDocumentView(msg tea.KeyMsg) tea.Cmd {
 		m.detailTab = 0
 		m.loading = true
 		m.pushScreen(screenIndexDetails)
-		return fetchIndexDetailsCmd(m.client, m.currentIndex)
+		return fetchIndexDetailsCmd(*m, m.currentIndex)
 	default:
 		var cmd tea.Cmd
 		m.docView, cmd = m.docView.Update(msg)

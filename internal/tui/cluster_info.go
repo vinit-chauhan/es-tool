@@ -15,6 +15,7 @@ import (
 // security feature answer it with an error that is not worth surfacing as a
 // failure.
 type clusterInfoMsg struct {
+	epoch   int
 	root    any
 	health  any
 	user    any
@@ -22,9 +23,10 @@ type clusterInfoMsg struct {
 	err     error
 }
 
-func fetchClusterInfoCmd(client *esclient.Client) tea.Cmd {
+func fetchClusterInfoCmd(m Model) tea.Cmd {
+	client, epoch := m.client, m.connEpoch
 	return func() tea.Msg {
-		var msg clusterInfoMsg
+		msg := clusterInfoMsg{epoch: epoch}
 		root, err := get(client, "/")
 		if err != nil {
 			msg.err = err
@@ -56,7 +58,7 @@ func (m *Model) updateClusterInfo(msg tea.KeyMsg) tea.Cmd {
 		m.popScreen()
 	case "r":
 		m.loading = true
-		return fetchClusterInfoCmd(m.client)
+		return fetchClusterInfoCmd(*m)
 	default:
 		var cmd tea.Cmd
 		m.infoView, cmd = m.infoView.Update(msg)

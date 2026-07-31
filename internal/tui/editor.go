@@ -212,6 +212,7 @@ func (m *Model) handleEditorDone(msg editorDoneMsg) tea.Cmd {
 		}
 		return requestCmd(
 			m.client,
+			m.connEpoch,
 			operationCreateDocument,
 			method,
 			path,
@@ -221,6 +222,7 @@ func (m *Model) handleEditorDone(msg editorDoneMsg) tea.Cmd {
 	case editorPartialUpdate:
 		return requestCmd(
 			m.client,
+			m.connEpoch,
 			operationUpdateDocument,
 			"POST",
 			"/"+url.PathEscape(msg.index)+"/_update/"+url.PathEscape(msg.id),
@@ -235,6 +237,7 @@ func (m *Model) handleEditorDone(msg editorDoneMsg) tea.Cmd {
 		}
 		return requestCmd(
 			m.client,
+			m.connEpoch,
 			operationEditDocument,
 			"PUT",
 			"/"+url.PathEscape(msg.index)+"/_doc/"+url.PathEscape(msg.id),
