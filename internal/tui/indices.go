@@ -87,8 +87,11 @@ func (m *Model) updateIndices(msg tea.KeyMsg) tea.Cmd {
 	case "enter":
 		if index := m.selectedIndex(); index != "" {
 			m.currentIndex = index
+			m.from = 0
+			m.loading = true
 			m.pushScreen(screenDocuments)
 			m.status = notification{text: "Opening " + index}
+			return fetchDocumentsCmd(*m)
 		}
 	case "S":
 		if index := m.selectedIndex(); index != "" {

@@ -34,6 +34,10 @@ type promptKind int
 const (
 	promptNone promptKind = iota
 	promptIndexFilter
+	promptDocFilter
+	promptServerQuery
+	promptPageSize
+	promptDeleteDocument
 )
 
 type notification struct {
@@ -73,6 +77,20 @@ type Model struct {
 	detailTab    int
 	detailView   viewport.Model
 	detailText   [2]string
+
+	docTable     table.Model
+	allDocHits   []documentHit
+	docHits      []documentHit
+	docFilter    string
+	query        string
+	pageSize     int
+	from         int
+	total        int
+	currentDocID string
+	currentDoc   map[string]any
+	docView      viewport.Model
+	wrapJSON     bool
+	pendingDocID string
 }
 
 // Run launches the full-screen TUI.
@@ -127,6 +145,9 @@ func newModel(client *esclient.Client, startIndex string) (Model, error) {
 		prompt:        input,
 		indexTable:    newIndexTable(),
 		detailView:    viewport.New(0, 0),
+		docTable:      newDocumentTable(),
+		pageSize:      50,
+		docView:       viewport.New(0, 0),
 	}
 	if startIndex != "" {
 		model.screen = screenDocuments
@@ -150,6 +171,8 @@ func (m Model) Init() tea.Cmd {
 	commands := []tea.Cmd{m.spinner.Tick, healthCmd(m.client)}
 	if m.screen == screenIndices {
 		commands = append(commands, fetchIndicesCmd(m.client, m.showHidden))
+	} else if m.screen == screenDocuments {
+		commands = append(commands, fetchDocumentsCmd(m))
 	}
 	return tea.Batch(commands...)
 }
@@ -172,11 +195,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = notification{text: msg.err.Error(), isErr: true}
 		} else {
 			m.health = healthStatus{state: stateHealthConnected}
-			m.handleResponse(msg)
+			if cmd := m.handleResponse(msg); cmd != nil {
+				commands = append(commands, cmd)
+			}
 		}
 	case editorDoneMsg:
 		m.loading = false
-		m.handleEditorDone(msg)
+		if cmd := m.handleEditorDone(msg); cmd != nil {
+			commands = append(commands, cmd)
+		}
 	case tea.KeyMsg:
 		if m.promptKind != promptNone {
 			return m.updatePrompt(msg)
@@ -209,6 +236,14 @@ func (m *Model) resize() {
 	m.setIndexColumns()
 	m.detailView.Width = max(10, m.width-4)
 	m.detailView.Height = contentHeight
+	m.docTable.SetHeight(contentHeight)
+	m.docTable.SetWidth(max(20, m.width-2))
+	m.setDocumentColumns()
+	m.docView.Width = max(10, m.width-4)
+	m.docView.Height = contentHeight
+	if m.currentDoc != nil {
+		m.refreshDocumentViewport()
+	}
 }
 
 func (m *Model) updateScreen(msg tea.KeyMsg) tea.Cmd {
@@ -218,9 +253,9 @@ func (m *Model) updateScreen(msg tea.KeyMsg) tea.Cmd {
 	case screenIndexDetails:
 		return m.updateIndexDetails(msg)
 	case screenDocuments:
-		if msg.String() == "esc" || msg.String() == "b" {
-			m.popScreen()
-		}
+		return m.updateDocuments(msg)
+	case screenDocument:
+		return m.updateDocumentView(msg)
 	}
 	return nil
 }
@@ -238,6 +273,31 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case promptIndexFilter:
 			m.indexFilter = value
 			m.applyIndexFilter()
+		case promptDocFilter:
+			m.docFilter = value
+			m.applyDocumentFilter()
+		case promptServerQuery:
+			m.query = value
+			m.from = 0
+			m.loading = true
+			return m, fetchDocumentsCmd(m)
+		case promptPageSize:
+			size, err := parsePageSize(value)
+			if err != nil {
+				m.status = notification{text: err.Error(), isErr: true}
+			} else {
+				m.pageSize = size
+				m.from = 0
+				m.loading = true
+				return m, fetchDocumentsCmd(m)
+			}
+		case promptDeleteDocument:
+			if value != m.pendingDocID {
+				m.status = notification{text: "Delete cancelled: document id did not match", isErr: true}
+			} else {
+				m.loading = true
+				return m, deleteDocumentCmd(m.client, m.currentIndex, m.pendingDocID)
+			}
 		}
 		return m, nil
 	}
@@ -321,9 +381,13 @@ func (m Model) screenView() string {
 		tab := styles.key.Render("[" + []string{"Settings", "Mappings"}[m.detailTab] + "]")
 		return tab + "\n" + m.detailView.View()
 	case screenDocuments:
-		return styles.panel.Width(max(20, m.width-4)).Render(
-			styles.title.Render(m.currentIndex) + "\n\nDocument browser migration in progress.",
-		)
+		summary := fmt.Sprintf("Showing %d–%d of %d", min(m.from+1, m.total), min(m.from+len(m.docHits), m.total), m.total)
+		if m.query != "" {
+			summary += " • query: " + m.query
+		}
+		return styles.subtitle.Render(summary) + "\n" + m.docTable.View()
+	case screenDocument:
+		return m.docView.View()
 	default:
 		return styles.panel.Width(max(20, m.width-4)).Render("Screen migration in progress.")
 	}
@@ -336,7 +400,9 @@ func (m Model) screenHint() string {
 	case screenIndexDetails:
 		return "tab/←/→: settings/mappings • r: refresh • b/esc: back • ?: help • q: quit"
 	case screenDocuments:
-		return "b/esc: back • ?: help • q: quit"
+		return "enter/v: view • e: edit • d: delete • /: filter • f: query • n/p: page • s: size • r: refresh • b: back"
+	case screenDocument:
+		return "e: edit • d: delete • w: wrap • ↑/↓/pgup/pgdn: scroll • b/esc: back"
 	default:
 		return "b/esc: back • ?: help • q: quit"
 	}
@@ -359,21 +425,33 @@ func (m *Model) popScreen() {
 	m.history = m.history[:last]
 }
 
-func (m *Model) handleResponse(msg requestMsg) {
+func (m *Model) handleResponse(msg requestMsg) tea.Cmd {
 	switch msg.operation {
 	case operationIndices:
 		m.receiveIndices(msg.body)
 	case operationIndexDetails:
 		m.receiveIndexDetails(msg.body)
+	case operationDocuments:
+		m.receiveDocuments(msg.body)
+	case operationGetDocument:
+		m.receiveDocument(msg.body)
+	case operationGetDocumentForEdit:
+		return m.openDocumentEditor(msg.body)
+	case operationEditDocument:
+		m.status = notification{text: "Document saved"}
+		if m.screen == screenDocument {
+			return tea.Batch(
+				fetchDocumentsCmd(*m),
+				getDocumentCmd(m.client, m.currentIndex, m.currentDocID, operationGetDocument),
+			)
+		}
+		return fetchDocumentsCmd(*m)
+	case operationDeleteDocument:
+		m.status = notification{text: "Document deleted"}
+		if m.screen == screenDocument {
+			m.popScreen()
+		}
+		return fetchDocumentsCmd(*m)
 	}
-}
-
-type editorDoneMsg struct {
-	err error
-}
-
-func (m *Model) handleEditorDone(msg editorDoneMsg) {
-	if msg.err != nil {
-		m.status = notification{text: msg.err.Error(), isErr: true}
-	}
+	return nil
 }
