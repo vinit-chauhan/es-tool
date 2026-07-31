@@ -158,18 +158,31 @@ func healthBadge(health healthStatus) string {
 	}
 }
 
+// renderFooter always keeps the hotkey hints visible on their own line;
+// status messages (which may contain multi-line JSON from error responses)
+// are flattened and clipped to a single line above them.
 func renderFooter(status notification, hint string, width int) string {
-	left := ""
+	statusLine := ""
 	if status.text != "" {
 		style := styles.status
 		if status.isErr {
 			style = styles.statusError
 		}
-		left = style.Render(status.text)
+		statusLine = style.Render(singleLine(status.text, max(10, width-1)))
 	}
-	right := styles.dim.Render(hint)
-	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
-	return left + strings.Repeat(" ", gap) + right
+	hintLine := styles.dim.Render(singleLine(hint, max(10, width-1)))
+	return statusLine + "\n" + hintLine
+}
+
+// singleLine collapses all whitespace (including newlines) into single spaces
+// and truncates the result to at most width runes.
+func singleLine(s string, width int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	if len(runes) > width {
+		return string(runes[:max(1, width-1)]) + "…"
+	}
+	return s
 }
 
 type helpSection struct {

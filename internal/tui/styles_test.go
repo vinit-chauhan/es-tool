@@ -29,6 +29,37 @@ func TestHighlightMatch(t *testing.T) {
 	}
 }
 
+func TestRenderFooterKeepsHintVisibleOnMultilineErrors(t *testing.T) {
+	status := notification{
+		text:  "HTTP 403: {\n  \"message\": \"Forbidden due to traffic filtering.\",\n  \"ok\": false\n}",
+		isErr: true,
+	}
+	got := renderFooter(status, "enter: open • q: quit", 80)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("footer must be exactly 2 lines (status + hint), got %d:\n%s", len(lines), got)
+	}
+	if !strings.Contains(stripANSI(lines[0]), "HTTP 403") {
+		t.Errorf("status line lost the error text: %q", stripANSI(lines[0]))
+	}
+	if !strings.Contains(stripANSI(lines[1]), "q: quit") {
+		t.Errorf("hint line lost the hotkeys: %q", stripANSI(lines[1]))
+	}
+}
+
+func TestSingleLineFlattensAndClips(t *testing.T) {
+	if got := singleLine("a\n  b\tc", 80); got != "a b c" {
+		t.Errorf("singleLine() = %q, want %q", got, "a b c")
+	}
+	got := singleLine(strings.Repeat("x", 100), 10)
+	if runes := []rune(got); len(runes) > 10 {
+		t.Errorf("singleLine() length = %d runes, want <= 10 (%q)", len(runes), got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("truncated text should end with an ellipsis, got %q", got)
+	}
+}
+
 // stripANSI removes CSI escape sequences so highlighted output can be
 // compared against the plain text it was derived from.
 func stripANSI(s string) string {
