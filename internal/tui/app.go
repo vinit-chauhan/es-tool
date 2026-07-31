@@ -441,18 +441,25 @@ func (m Model) View() string {
 		body = renderHelpOverlay(m.width, m.height)
 	}
 	hint := m.screenHint()
+	footer := renderFooter(m.status, hint, m.width)
 	if m.promptKind != promptNone {
-		hint = "enter: apply • esc: cancel"
-		body += "\n" + styles.key.Render(m.promptLabel) + " " + m.prompt.View()
+		promptLine := styles.key.Render(m.promptLabel) + " " + m.prompt.View()
+		footer = promptLine + "\n" + renderFooter(m.status, "enter: apply • esc: cancel", m.width)
 	}
 	if m.loading {
 		body = m.spinner.View() + " " + styles.dim.Render("Loading…") + "\n" + body
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		body,
-		renderFooter(m.status, hint, m.width),
-	)
+
+	// Stretch the body to fill the terminal so the footer (and any active
+	// prompt above it) stays pinned to the bottom rows regardless of how tall
+	// the current screen's content is.
+	if m.height > 0 {
+		bodyHeight := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
+		if gap := bodyHeight - lipgloss.Height(body); gap > 0 {
+			body += strings.Repeat("\n", gap)
+		}
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
 func (m Model) screenTitle() string {
