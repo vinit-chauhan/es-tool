@@ -87,10 +87,12 @@ type Model struct {
 	promptLabel  string
 	promptSecret bool
 
-	allIndices  []map[string]any
-	indexTable  table.Model
-	indexFilter string
-	showHidden  bool
+	allIndices      []map[string]any
+	filteredIndices []map[string]any
+	indexTable      table.Model
+	indexFilter     string
+	indexPage       int
+	showHidden      bool
 
 	currentIndex string
 	detailTab    int
@@ -311,6 +313,7 @@ func (m *Model) resize() {
 	m.indexTable.SetHeight(contentHeight)
 	m.indexTable.SetWidth(max(20, m.width-2))
 	m.setIndexColumns()
+	m.renderIndexPage()
 	m.detailView.Width = max(10, m.width-4)
 	m.detailView.Height = contentHeight
 	m.infoView.Width = max(10, m.width-4)
@@ -531,8 +534,17 @@ func (m Model) screenTitle() string {
 	case screenClusterInfo:
 		return "Cluster info"
 	default:
+		return m.indicesTitle()
+	}
+}
+
+func (m Model) indicesTitle() string {
+	pageSize := max(1, m.indexTable.Height())
+	totalPages := max(1, (len(m.filteredIndices)+pageSize-1)/pageSize)
+	if totalPages <= 1 {
 		return "Indices"
 	}
+	return fmt.Sprintf("Indices • page %d/%d", m.indexPage+1, totalPages)
 }
 
 func (m Model) screenView() string {
@@ -569,7 +581,7 @@ func (m Model) screenView() string {
 func (m Model) screenHint() string {
 	switch m.screen {
 	case screenIndices:
-		return "enter: open • /: filter • h: hidden • i: details • c: cluster • .: settings • ?: help • q: quit"
+		return "enter: open • ←/→: page • /: filter • h: hidden • i: details • c: cluster • .: settings • ?: help • q: quit"
 	case screenIndexDetails:
 		return "tab: settings/mappings • r: refresh • esc: back • ?: help • q: quit"
 	case screenDocuments:

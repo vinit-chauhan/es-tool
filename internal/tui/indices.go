@@ -87,6 +87,16 @@ func (m *Model) updateIndices(msg tea.KeyMsg) tea.Cmd {
 		return fetchIndicesCmd(*m)
 	case "/":
 		return m.openPrompt(promptIndexFilter, "Filter indices:", m.indexFilter)
+	case "left":
+		if m.indexPage > 0 {
+			m.indexPage--
+			m.renderIndexPage()
+		}
+	case "right":
+		if (m.indexPage+1)*m.indexPageSize() < len(m.filteredIndices) {
+			m.indexPage++
+			m.renderIndexPage()
+		}
 	case "enter":
 		if index := m.selectedIndex(); index != "" {
 			m.currentIndex = index
@@ -150,13 +160,20 @@ func (m *Model) receiveIndices(body any) {
 	sort.Slice(m.allIndices, func(i, j int) bool {
 		return util.AsStr(m.allIndices[i]["index"]) < util.AsStr(m.allIndices[j]["index"])
 	})
+	m.indexPage = 0
 	m.applyIndexFilter()
-	m.status = notification{text: fmt.Sprintf("Loaded %d indices", len(m.indexTable.Rows()))}
+	m.status = notification{text: fmt.Sprintf("Loaded %d indices", len(m.filteredIndices))}
+}
+
+// indexPageSize returns how many index rows fit on one page, based on the
+// table's visible height.
+func (m *Model) indexPageSize() int {
+	return max(1, m.indexTable.Height())
 }
 
 func (m *Model) applyIndexFilter() {
 	filter := strings.ToLower(strings.TrimSpace(m.indexFilter))
-	rows := make([]table.Row, 0, len(m.allIndices))
+	m.filteredIndices = make([]map[string]any, 0, len(m.allIndices))
 	for _, item := range m.allIndices {
 		name := util.AsStr(item["index"])
 		if !m.showHidden && strings.HasPrefix(name, ".") {
@@ -165,18 +182,39 @@ func (m *Model) applyIndexFilter() {
 		if filter != "" && !strings.Contains(strings.ToLower(name), filter) {
 			continue
 		}
+		m.filteredIndices = append(m.filteredIndices, item)
+	}
+	m.indexPage = 0
+	m.renderIndexPage()
+}
+
+// renderIndexPage slices the filtered indices to the current page and loads
+// only those rows into the table, so up/down movement and left/right paging
+// operate on discrete pages instead of one continuously scrolling list.
+func (m *Model) renderIndexPage() {
+	pageSize := m.indexPageSize()
+	totalPages := max(1, (len(m.filteredIndices)+pageSize-1)/pageSize)
+	if m.indexPage >= totalPages {
+		m.indexPage = totalPages - 1
+	}
+	if m.indexPage < 0 {
+		m.indexPage = 0
+	}
+	start := m.indexPage * pageSize
+	end := min(start+pageSize, len(m.filteredIndices))
+
+	rows := make([]table.Row, 0, end-start)
+	for _, item := range m.filteredIndices[start:end] {
 		rows = append(rows, table.Row{
 			util.AsStr(item["health"]),
 			util.AsStr(item["status"]),
-			name,
+			util.AsStr(item["index"]),
 			util.AsStr(item["docs.count"]),
 			util.AsStr(item["store.size"]),
 		})
 	}
 	m.indexTable.SetRows(rows)
-	if m.indexTable.Cursor() >= len(rows) {
-		m.indexTable.SetCursor(max(0, len(rows)-1))
-	}
+	m.indexTable.SetCursor(0)
 }
 
 func (m Model) selectedIndex() string {
