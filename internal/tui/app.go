@@ -91,6 +91,9 @@ type Model struct {
 	detailView   viewport.Model
 	detailText   [2]string
 
+	infoView viewport.Model
+	infoText string
+
 	docTable           table.Model
 	allDocHits         []documentHit
 	docHits            []documentHit
@@ -170,6 +173,7 @@ func newModel(client *esclient.Client, startIndex string) (Model, error) {
 		prompt:        input,
 		indexTable:    newIndexTable(),
 		detailView:    viewport.New(0, 0),
+		infoView:      viewport.New(0, 0),
 		docTable:      newDocumentTable(),
 		pageSize:      50,
 		docView:       viewport.New(0, 0),
@@ -231,6 +235,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd := m.handleEditorDone(msg); cmd != nil {
 			commands = append(commands, cmd)
 		}
+	case clusterInfoMsg:
+		m.loading = false
+		m.receiveClusterInfo(msg)
 	case tea.KeyMsg:
 		if m.promptKind != promptNone {
 			return m.updatePrompt(msg)
@@ -268,6 +275,8 @@ func (m *Model) resize() {
 	m.setIndexColumns()
 	m.detailView.Width = max(10, m.width-4)
 	m.detailView.Height = contentHeight
+	m.infoView.Width = max(10, m.width-4)
+	m.infoView.Height = contentHeight
 	m.docTable.SetHeight(contentHeight)
 	m.docTable.SetWidth(max(20, m.width-2))
 	m.setDocumentColumns()
@@ -297,6 +306,8 @@ func (m *Model) updateScreen(msg tea.KeyMsg) tea.Cmd {
 		return m.updateClusterEditor(msg)
 	case screenSearch:
 		return m.updateSearch(msg)
+	case screenClusterInfo:
+		return m.updateClusterInfo(msg)
 	}
 	return nil
 }
@@ -489,6 +500,8 @@ func (m Model) screenView() string {
 		return m.clusterEditorView()
 	case screenSearch:
 		return m.searchView()
+	case screenClusterInfo:
+		return m.infoView.View()
 	default:
 		return styles.panel.Width(max(20, m.width-4)).Render("Screen migration in progress.")
 	}
@@ -510,6 +523,8 @@ func (m Model) screenHint() string {
 		return "n: name • u: URL • a: auth • k: API key • x: user • p: password • t: TLS • s: save • b: cancel"
 	case screenSearch:
 		return "f: Lucene • s: sort • o: source • j: JSON body • i: IDs only • c: count • x: reset • enter: run • b: back"
+	case screenClusterInfo:
+		return "r: refresh • ↑/↓/pgup/pgdn: scroll • b/esc: back • ?: help • q: quit"
 	default:
 		return "b/esc: back • ?: help • q: quit"
 	}
