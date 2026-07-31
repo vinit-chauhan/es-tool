@@ -46,6 +46,7 @@ const (
 	promptQuickConnectURL
 	promptDeleteProfile
 	promptCreateDocumentID
+	promptDeleteByQuery
 )
 
 type notification struct {
@@ -87,19 +88,20 @@ type Model struct {
 	detailView   viewport.Model
 	detailText   [2]string
 
-	docTable     table.Model
-	allDocHits   []documentHit
-	docHits      []documentHit
-	docFilter    string
-	query        string
-	pageSize     int
-	from         int
-	total        int
-	currentDocID string
-	currentDoc   map[string]any
-	docView      viewport.Model
-	wrapJSON     bool
-	pendingDocID string
+	docTable           table.Model
+	allDocHits         []documentHit
+	docHits            []documentHit
+	docFilter          string
+	query              string
+	pageSize           int
+	from               int
+	total              int
+	currentDocID       string
+	currentDoc         map[string]any
+	docView            viewport.Model
+	wrapJSON           bool
+	pendingDocID       string
+	pendingDeleteCount int
 
 	settingsTable   table.Model
 	editingCluster  appconfig.Cluster
@@ -351,6 +353,14 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if cmd := m.openCreateDocumentEditor(value); cmd != nil {
 				return m, cmd
 			}
+		case promptDeleteByQuery:
+			expected := fmt.Sprintf("delete %d", m.pendingDeleteCount)
+			if value != expected {
+				m.status = notification{text: "Bulk delete cancelled: confirmation did not match", isErr: true}
+			} else {
+				m.loading = true
+				return m, deleteByQueryCmd(m)
+			}
 		}
 		return m, nil
 	}
@@ -476,7 +486,7 @@ func (m Model) screenHint() string {
 	case screenIndexDetails:
 		return "tab/←/→: settings/mappings • r: refresh • b/esc: back • ?: help • q: quit"
 	case screenDocuments:
-		return "enter: view • c: create • e: replace • u/U: update/upsert • d: delete • /: filter • f: query • n/p: page"
+		return "enter: view • c: create • e: replace • u/U: update/upsert • d/D: delete/doc query • /: filter • f: query"
 	case screenDocument:
 		return "e: replace • u/U: update/upsert • d: delete • w: wrap • ↑/↓/pgup/pgdn: scroll • b/esc: back"
 	case screenSettings:
@@ -543,6 +553,12 @@ func (m *Model) handleResponse(msg requestMsg) tea.Cmd {
 				getDocumentCmd(m.client, m.currentIndex, m.currentDocID, operationGetDocument),
 			)
 		}
+		return fetchDocumentsCmd(*m)
+	case operationCountForDelete:
+		return m.receiveDeleteCount(msg.body)
+	case operationDeleteByQuery:
+		m.from = 0
+		m.status = notification{text: deleteByQueryResult(msg.body)}
 		return fetchDocumentsCmd(*m)
 	}
 	return nil

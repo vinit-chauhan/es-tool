@@ -147,6 +147,14 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 			m.pendingDocID = hit.id
 			return m.openPrompt(promptDeleteDocument, "Type "+hit.id+" to delete:", "")
 		}
+	case "D":
+		if m.query == "" {
+			m.status = notification{text: "Set a server query before using delete-by-query", isErr: true}
+			return nil
+		}
+		m.loading = true
+		m.status = notification{text: "Counting matching documents"}
+		return countForDeleteCmd(*m)
 	case "S":
 		m.detailTab = 0
 		m.loading = true
