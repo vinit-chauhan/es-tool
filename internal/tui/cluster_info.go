@@ -52,7 +52,7 @@ func get(client *esclient.Client, path string) (any, error) {
 
 func (m *Model) updateClusterInfo(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
-	case "esc", "b":
+	case "esc":
 		m.popScreen()
 	case "r":
 		m.loading = true

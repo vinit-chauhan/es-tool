@@ -86,7 +86,7 @@ func (m *Model) receiveExactCount(body any) {
 
 func (m *Model) updateSearch(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
-	case "esc", "b":
+	case "esc":
 		m.popScreen()
 	case "f":
 		return m.openPrompt(promptSearchQuery, "Lucene query:", m.query)

@@ -93,7 +93,7 @@ func (m *Model) updateIndices(msg tea.KeyMsg) tea.Cmd {
 			m.status = notification{text: "Opening " + index}
 			return fetchDocumentsCmd(*m)
 		}
-	case "S":
+	case "i":
 		if index := m.selectedIndex(); index != "" {
 			m.currentIndex = index
 			m.detailTab = 0
@@ -101,13 +101,10 @@ func (m *Model) updateIndices(msg tea.KeyMsg) tea.Cmd {
 			m.pushScreen(screenIndexDetails)
 			return fetchIndexDetailsCmd(m.client, index)
 		}
-	case "i":
+	case "c":
 		m.pushScreen(screenClusterInfo)
 		m.loading = true
 		return fetchClusterInfoCmd(m.client)
-	case ".":
-		m.refreshSettingsRows()
-		m.pushScreen(screenSettings)
 	default:
 		var cmd tea.Cmd
 		m.indexTable, cmd = m.indexTable.Update(msg)
@@ -118,7 +115,7 @@ func (m *Model) updateIndices(msg tea.KeyMsg) tea.Cmd {
 
 func (m *Model) updateIndexDetails(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
-	case "esc", "b":
+	case "esc":
 		m.popScreen()
 	case "tab", "right", "left":
 		m.detailTab = 1 - m.detailTab

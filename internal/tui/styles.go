@@ -185,6 +185,11 @@ func singleLine(s string, width int) string {
 	return s
 }
 
+// fieldRow renders a hotkey-labeled form row, shared by the search builder.
+func fieldRow(key, label, value string) string {
+	return fmt.Sprintf("%s  %-16s %s", styles.key.Render(key), label, value)
+}
+
 type helpSection struct {
 	title string
 	rows  [][2]string
@@ -195,32 +200,46 @@ var helpSections = []helpSection{
 		{"?", "toggle this help"},
 		{"ctrl+c / q", "quit"},
 		{".", "cluster settings"},
-		{"b / esc", "back"},
+		{"esc", "back"},
+	}},
+	{title: "Lists and viewers", rows: [][2]string{
+		{"↑/↓ or j/k", "move / scroll"},
+		{"g / G", "jump to top / bottom"},
+		{"pgup / pgdn", "page up / down"},
+		{"u / d", "half page up / down (viewers)"},
 	}},
 	{title: "Indices", rows: [][2]string{
 		{"enter", "open index"},
 		{"/", "filter"},
 		{"h", "toggle hidden indices"},
-		{"S", "index details"},
-		{"i", "cluster info"},
+		{"i", "index details (settings + mappings)"},
+		{"c", "cluster info"},
+		{"r", "refresh"},
+	}},
+	{title: "Index details", rows: [][2]string{
+		{"tab", "switch settings ↔ mappings"},
 		{"r", "refresh"},
 	}},
 	{title: "Documents", rows: [][2]string{
 		{"enter", "view document"},
-		{"c", "create document"},
-		{"e", "replace document"},
+		{"a", "create document"},
+		{"e", "edit (replace) document"},
 		{"u / U", "partial update / upsert"},
 		{"d / D", "delete document / delete by query"},
 		{"/", "client-side filter"},
-		{"f", "server query"},
+		{"f", "server query (Lucene)"},
 		{"F", "advanced search builder"},
 		{"n / p", "next / previous page"},
+		{"s", "page size"},
+		{"i", "index details"},
+		{"r", "refresh"},
 	}},
 	{title: "Document viewer", rows: [][2]string{
-		{"e", "replace"},
+		{"e", "edit (replace)"},
 		{"u / U", "partial update / upsert"},
 		{"d", "delete"},
 		{"w", "toggle wrap"},
+		{"r", "refresh"},
 	}},
 	{title: "Advanced search", rows: [][2]string{
 		{"f", "Lucene query"},
@@ -233,19 +252,26 @@ var helpSections = []helpSection{
 		{"enter", "run search"},
 	}},
 	{title: "Cluster settings", rows: [][2]string{
-		{"enter", "activate profile"},
+		{"enter", "connect and open indices"},
 		{"a", "add profile"},
 		{"e", "edit profile"},
 		{"d", "delete profile"},
-		{"c", "quick connect"},
-		{"r", "check health"},
+		{"c", "quick connect (session only)"},
+		{"r", "check health of every profile"},
+	}},
+	{title: "Cluster profile editor", rows: [][2]string{
+		{"↑/↓", "select field"},
+		{"enter", "edit field / toggle value"},
+		{"←/→", "change auth mode or TLS"},
+		{"ctrl+s", "save and connect"},
+		{"esc", "back (warns on unsaved changes)"},
 	}},
 }
 
-func renderHelpOverlay(width, height int) string {
+// renderHelpContent builds the full hotkey reference shown inside the
+// scrollable help viewport.
+func renderHelpContent() string {
 	var body strings.Builder
-	body.WriteString(styles.title.Render("Keyboard shortcuts"))
-	body.WriteString("\n")
 	for _, section := range helpSections {
 		body.WriteString("\n")
 		body.WriteString(styles.subtitle.Render(section.title))
@@ -254,8 +280,5 @@ func renderHelpOverlay(width, height int) string {
 			fmt.Fprintf(&body, "  %-12s %s\n", styles.key.Render(row[0]), row[1])
 		}
 	}
-	return styles.panel.
-		Width(max(24, min(72, width-4))).
-		Height(max(6, min(height-4, lipgloss.Height(body.String())+2))).
-		Render(body.String())
+	return body.String()
 }

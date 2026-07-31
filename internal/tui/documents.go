@@ -88,7 +88,7 @@ func deleteDocumentCmd(client *esclient.Client, index, id string) tea.Cmd {
 
 func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
-	case "esc", "b":
+	case "esc":
 		m.popScreen()
 	case "r":
 		m.loading = true
@@ -128,7 +128,7 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 			m.loading = true
 			return getDocumentCmd(m.client, m.currentIndex, hit.id, operationGetDocumentForEdit)
 		}
-	case "c":
+	case "a":
 		return m.openPrompt(promptCreateDocumentID, "Document ID (blank for auto-generated):", "")
 	case "u", "U":
 		if hit, ok := m.selectedDocument(); ok {
@@ -149,14 +149,11 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 		m.loading = true
 		m.status = notification{text: "Counting matching documents"}
 		return countForDeleteCmd(*m)
-	case "S":
+	case "i":
 		m.detailTab = 0
 		m.loading = true
 		m.pushScreen(screenIndexDetails)
 		return fetchIndexDetailsCmd(m.client, m.currentIndex)
-	case ".":
-		m.refreshSettingsRows()
-		m.pushScreen(screenSettings)
 	default:
 		var cmd tea.Cmd
 		m.docTable, cmd = m.docTable.Update(msg)
@@ -167,7 +164,7 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 
 func (m *Model) updateDocumentView(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
-	case "esc", "b":
+	case "esc":
 		m.popScreen()
 	case "r":
 		m.loading = true
@@ -183,7 +180,7 @@ func (m *Model) updateDocumentView(msg tea.KeyMsg) tea.Cmd {
 	case "w":
 		m.wrapJSON = !m.wrapJSON
 		m.refreshDocumentViewport()
-	case "S":
+	case "i":
 		m.detailTab = 0
 		m.loading = true
 		m.pushScreen(screenIndexDetails)

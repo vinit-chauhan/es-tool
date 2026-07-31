@@ -60,18 +60,20 @@ profile (see Settings below).
 
 ## Keys
 
+Global: `?` opens a scrollable hotkey reference · `.` jumps to settings from
+anywhere · `Esc` goes back · `Ctrl+C`/`q` quits. Lists and viewers scroll with
+`↑/↓` or `j/k`, `PgUp/PgDn`, and `g`/`G` for top/bottom.
+
 | Screen          | Keys                                                                                                                                                                               |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Indices          | `↑/↓` move · `Enter` open · `/` filter · `h` toggle hidden · `S` index details · `i` cluster info · `r` refresh · `.` settings · `q` quit                                        |
-| Index details    | `Tab`/`←/→` settings ↔ mappings · `r` refresh · `b`/`Esc` back                                                                                                                    |
-| Documents        | `Enter` view · `c` create · `e` replace · `u`/`U` partial update / upsert · `d`/`D` delete doc / delete-by-query · `/` client filter · `f` server query · `F` advanced search · `n/p` page · `s` page size · `r` refresh |
-| Document viewer  | `e` replace · `u`/`U` partial update / upsert · `d` delete · `w` toggle wrap · `↑/↓` `PgUp/PgDn` scroll · `b`/`Esc` back                                                          |
-| Advanced search  | `f` Lucene query · `s` sort · `o` `_source` filter · `j` raw JSON body · `i` IDs only · `c` exact count · `x` reset · `Enter` run · `b` back                                     |
-| Cluster info     | `r` refresh · `↑/↓` `PgUp/PgDn` scroll · `b`/`Esc` back                                                                                                                            |
-| Settings         | `Enter` activate profile · `a` add · `e` edit · `d` delete · `c` quick connect (session-only) · `r` check health · `b`/`Esc` back                                                |
-
-Global: `?` toggles a full hotkey reference for the current session; `.`
-jumps to settings from anywhere; `Ctrl+C`/`q` quits.
+| Indices          | `Enter` open · `/` filter · `h` toggle hidden · `i` index details · `c` cluster info · `r` refresh                                                                                |
+| Index details    | `Tab` settings ↔ mappings · `r` refresh                                                                                                                                            |
+| Documents        | `Enter` view · `a` create · `e` edit · `u`/`U` partial update / upsert · `d`/`D` delete doc / delete-by-query · `/` client filter · `f` server query · `F` advanced search · `n/p` page · `s` page size · `r` refresh |
+| Document viewer  | `e` edit · `u`/`U` partial update / upsert · `d` delete · `w` toggle wrap · `r` refresh                                                                                            |
+| Advanced search  | `f` Lucene query · `s` sort · `o` `_source` filter · `j` raw JSON body · `i` IDs only · `c` exact count · `x` reset · `Enter` run                                                 |
+| Cluster info     | `r` refresh                                                                                                                                                                        |
+| Settings         | `Enter` connect and open indices · `a` add · `e` edit · `d` delete · `c` quick connect (session-only) · `r` check health of every profile                                         |
+| Profile editor   | `↑/↓` select field · `Enter` edit / toggle · `←/→` change auth mode or TLS · `Ctrl+S` save and connect · `Esc` back                                                               |
 
 ### Notes
 
@@ -80,7 +82,7 @@ jumps to settings from anywhere; `Ctrl+C`/`q` quits.
   (`if_seq_no`/`if_primary_term`) so concurrent writers won't be silently
   overwritten. `u` merges the edited object as a partial `_update`; `U` does
   the same with `doc_as_upsert`.
-- **Create** (`c`) prompts for an optional document id, opens `$EDITOR` with an
+- **Create** (`a`) prompts for an optional document id, opens `$EDITOR` with an
   empty JSON template, and indexes on save.
 - **Delete-by-query** (`D`) runs an exact `_count` for the active query first
   and requires typing `delete <n>` to confirm before calling
@@ -88,7 +90,7 @@ jumps to settings from anywhere; `Ctrl+C`/`q` quits.
 - **Advanced search** (`F`) builds a Lucene query, sort, `_source` filter, an
   ids-only toggle, or a hand-edited JSON request body; `c` runs an exact
   `_count` for the same query instead of fetching hits.
-- **Cluster info** (`i` from the indices screen) shows `GET /`, cluster
+- **Cluster info** (`c` from the indices screen) shows `GET /`, cluster
   health, connection details, and (when the security feature is enabled) the
   authenticated user.
 - `/` on indices or documents does a fast client-side substring filter on the
@@ -116,6 +118,15 @@ passwords and is written with owner-only (`0600`) permissions; secret fields
 are masked in the TUI. `c` on the settings screen opens a quick-connect prompt
 that configures the client for the current session only, without saving a
 profile.
+
+Each saved profile shows its own live health (`green`, `yellow`, `red`, or
+`unknown`), probed with that profile's connection settings when you open
+settings or press `r`. Selecting a profile with `Enter` connects to it and
+drops you straight onto its indices list.
+
+The profile editor is a form: move between fields with `↑/↓`, press `Enter` to
+edit a field (or toggle authentication/TLS), and save with `Ctrl+S`. Leaving
+the editor with unsaved changes asks for confirmation first.
 
 The active saved profile is used on the next launch. Explicit `ES_*`
 environment variables take precedence at startup; activating a profile from

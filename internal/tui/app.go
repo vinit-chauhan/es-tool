@@ -50,6 +50,7 @@ const (
 	promptSearchQuery
 	promptSearchSort
 	promptSearchSource
+	promptDiscardEdits
 )
 
 type notification struct {
@@ -75,6 +76,7 @@ type Model struct {
 	health   healthStatus
 	status   notification
 	showHelp bool
+	helpView viewport.Model
 
 	prompt       textinput.Model
 	promptKind   promptKind
@@ -115,9 +117,14 @@ type Model struct {
 	pendingDeleteCount int
 
 	settingsTable   table.Model
+	profileHealth   map[string]healthStatus
 	editingCluster  appconfig.Cluster
 	editingOriginal string
 	editingAuth     string
+	editingBaseline appconfig.Cluster
+	baselineAuth    string
+	editorCursor    int
+	pendingDiscard  string
 	pendingProfile  string
 }
 
@@ -178,6 +185,8 @@ func newModel(client *esclient.Client, startIndex string) (Model, error) {
 		pageSize:      50,
 		docView:       viewport.New(0, 0),
 		settingsTable: newSettingsTable(),
+		profileHealth: map[string]healthStatus{},
+		helpView:      viewport.New(0, 0),
 	}
 	if startIndex != "" {
 		model.screen = screenDocuments
@@ -238,27 +247,42 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case clusterInfoMsg:
 		m.loading = false
 		m.receiveClusterInfo(msg)
+	case profileHealthMsg:
+		m.receiveProfileHealth(msg)
 	case tea.KeyMsg:
 		if m.promptKind != promptNone {
 			return m.updatePrompt(msg)
 		}
-		if msg.String() == "ctrl+c" || (msg.String() == "q" && !m.showHelp) {
+		if m.showHelp {
+			switch msg.String() {
+			case "?", "esc", "q":
+				m.showHelp = false
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.helpView, cmd = m.helpView.Update(msg)
+				return m, cmd
+			}
+		}
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		if msg.String() == "q" {
+			if m.screen == screenClusterEditor {
+				return m, m.confirmLeaveEditor("quit")
+			}
 			return m, tea.Quit
 		}
 		if msg.String() == "?" {
-			m.showHelp = !m.showHelp
-			return m, nil
-		}
-		if m.showHelp {
-			if msg.String() == "esc" {
-				m.showHelp = false
-			}
+			m.showHelp = true
+			m.helpView.SetContent(renderHelpContent())
+			m.helpView.GotoTop()
 			return m, nil
 		}
 		if msg.String() == "." && m.screen != screenSettings && m.screen != screenClusterEditor {
 			m.refreshSettingsRows()
 			m.pushScreen(screenSettings)
-			return m, nil
+			return m, m.checkProfileHealth()
 		}
 		cmd := m.updateScreen(msg)
 		if cmd != nil {
@@ -285,6 +309,8 @@ func (m *Model) resize() {
 	m.settingsTable.SetHeight(contentHeight)
 	m.settingsTable.SetWidth(max(20, m.width-2))
 	m.setSettingsColumns()
+	m.helpView.Width = max(10, m.width-4)
+	m.helpView.Height = contentHeight
 	if m.currentDoc != nil {
 		m.refreshDocumentViewport()
 	}
@@ -388,6 +414,16 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sort = value
 		case promptSearchSource:
 			m.source = value
+		case promptDiscardEdits:
+			answer := strings.ToLower(value)
+			if answer != "y" && answer != "yes" {
+				m.status = notification{text: "Kept unsaved changes"}
+				return m, nil
+			}
+			if m.pendingDiscard == "quit" {
+				return m, tea.Quit
+			}
+			m.popScreen()
 		}
 		return m, nil
 	}
@@ -437,10 +473,11 @@ func (m Model) View() string {
 	}
 	header := renderHeader(m.screenTitle(), subtitle, m.health, m.width)
 	body := m.screenView()
-	if m.showHelp {
-		body = renderHelpOverlay(m.width, m.height)
-	}
 	hint := m.screenHint()
+	if m.showHelp {
+		body = styles.title.Render("Keyboard shortcuts") + "\n" + m.helpView.View()
+		hint = "↑/↓ j/k scroll • pgup/pgdn page • ?/esc/q close"
+	}
 	footer := renderFooter(m.status, hint, m.width)
 	if m.promptKind != promptNone {
 		promptLine := styles.key.Render(m.promptLabel) + " " + m.prompt.View()
@@ -517,23 +554,23 @@ func (m Model) screenView() string {
 func (m Model) screenHint() string {
 	switch m.screen {
 	case screenIndices:
-		return "enter: open • /: filter • h: hidden • S: details • r: refresh • ?: help • q: quit"
+		return "enter: open • /: filter • h: hidden • i: details • c: cluster info • r: refresh • ?: help • q: quit"
 	case screenIndexDetails:
-		return "tab/←/→: settings/mappings • r: refresh • b/esc: back • ?: help • q: quit"
+		return "tab: settings/mappings • r: refresh • esc: back • ?: help • q: quit"
 	case screenDocuments:
-		return "enter: view • c: create • e: replace • u/U: update/upsert • d/D: delete/query • /: filter • f/F: query/builder"
+		return "enter: view • a: create • e: edit • u/U: update/upsert • d/D: delete/by query • /: filter • f/F: query/builder"
 	case screenDocument:
-		return "e: replace • u/U: update/upsert • d: delete • w: wrap • ↑/↓/pgup/pgdn: scroll • b/esc: back"
+		return "e: edit • u/U: update/upsert • d: delete • w: wrap • ↑/↓ j/k: scroll • esc: back"
 	case screenSettings:
-		return "enter: activate • a: add • e: edit • d: delete • c: quick connect • r: health • b: back"
+		return "enter: connect • a: add • e: edit • d: delete • c: quick connect • r: health • esc: back"
 	case screenClusterEditor:
-		return "n: name • u: URL • a: auth • k: API key • x: user • p: password • t: TLS • s: save • b: cancel"
+		return "↑/↓: select field • enter: edit/toggle • ←/→: change value • ctrl+s: save • esc: back"
 	case screenSearch:
-		return "f: Lucene • s: sort • o: source • j: JSON body • i: IDs only • c: count • x: reset • enter: run • b: back"
+		return "f: Lucene • s: sort • o: source • j: JSON body • i: IDs only • c: count • x: reset • enter: run • esc: back"
 	case screenClusterInfo:
-		return "r: refresh • ↑/↓/pgup/pgdn: scroll • b/esc: back • ?: help • q: quit"
+		return "r: refresh • ↑/↓ j/k: scroll • esc: back • ?: help • q: quit"
 	default:
-		return "b/esc: back • ?: help • q: quit"
+		return "esc: back • ?: help • q: quit"
 	}
 }
 
