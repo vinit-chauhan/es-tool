@@ -33,9 +33,10 @@ es-tool/
 ├── cmd/es-tool/          # main package (entrypoint)
 │   └── main.go
 ├── internal/
+│   ├── config/           # persisted cluster connection profiles
 │   ├── esclient/         # Elasticsearch REST client (net/http)
 │   ├── tui/              # Bubble Tea application (the only interface)
-│   └── util/             # shared JSON / shell / editor helpers
+│   └── util/             # shared JSON / shell helpers
 ├── go.mod
 └── README.md
 ```
@@ -66,9 +67,9 @@ anywhere · `Esc` goes back · `Ctrl+C`/`q` quits. Lists and viewers scroll with
 
 | Screen          | Keys                                                                                                                                                                               |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Indices          | `Enter` open · `/` filter · `h` toggle hidden · `i` index details · `c` cluster info · `r` refresh                                                                                |
+| Indices          | `Enter` open · `←/→` page · `/` filter · `h` toggle hidden · `i` index details · `c` cluster info · `r` refresh                                                                   |
 | Index details    | `Tab` settings ↔ mappings · `r` refresh                                                                                                                                            |
-| Documents        | `Enter` view · `a` create · `e` edit · `u`/`U` partial update / upsert · `d`/`D` delete doc / delete-by-query · `/` client filter · `f` server query · `F` advanced search · `n/p` page · `s` page size · `r` refresh |
+| Documents        | `Enter` view · `a` create · `e` edit · `u`/`U` partial update / upsert · `d`/`D` delete doc / delete-by-query · `/` client filter · `f` server query · `F` advanced search · `←/→` page · `s` page size · `r` refresh |
 | Document viewer  | `e` edit · `u`/`U` partial update / upsert · `d` delete · `w` toggle wrap · `r` refresh                                                                                            |
 | Advanced search  | `f` Lucene query · `s` sort · `o` `_source` filter · `j` raw JSON body · `i` IDs only · `c` exact count · `x` reset · `Enter` run                                                 |
 | Cluster info     | `r` refresh                                                                                                                                                                        |
@@ -98,8 +99,10 @@ anywhere · `Esc` goes back · `Ctrl+C`/`q` quits. Lists and viewers scroll with
   Matched substrings are underlined in the document list.
 - Hidden and dot-prefixed indices are omitted by default; press `h` to
   toggle them.
-- Pagination uses `from`/`size`; the header shows the total so you can tell
-  when you've reached the end.
+- `←/→` paginate both lists. Indices are loaded in full and sliced into
+  screen-sized pages client-side. Documents are paged from the server via
+  `from`/`size` (batch size set with `s`); the header shows the total so you
+  can tell when you've reached the end.
 - JSON in the document viewer and index details panes is syntax-highlighted.
 
 ## Configuration
