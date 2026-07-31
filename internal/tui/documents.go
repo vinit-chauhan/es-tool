@@ -98,6 +98,16 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 		return fetchDocumentsCmd(*m)
 	case "/":
 		return m.openPrompt(promptDocFilter, "Filter visible documents:", m.docFilter)
+	case "left":
+		if m.docPage > 0 {
+			m.docPage--
+			m.renderDocumentPage()
+		}
+	case "right":
+		if (m.docPage+1)*m.docPageSize() < len(m.docHits) {
+			m.docPage++
+			m.renderDocumentPage()
+		}
 	case "f":
 		return m.openPrompt(promptServerQuery, "Lucene query:", m.query)
 	case "F":
@@ -234,7 +244,6 @@ func totalHits(value any) int {
 
 func (m *Model) applyDocumentFilter() {
 	filter := strings.ToLower(strings.TrimSpace(m.docFilter))
-	rows := make([]table.Row, 0, len(m.allDocHits))
 	filtered := make([]documentHit, 0, len(m.allDocHits))
 	for _, hit := range m.allDocHits {
 		searchable := hit.id + " " + util.Dump(hit.source)
@@ -242,13 +251,47 @@ func (m *Model) applyDocumentFilter() {
 			continue
 		}
 		filtered = append(filtered, hit)
-		rows = append(rows, table.Row{highlightMatch(hit.id, filter), highlightMatch(documentPreview(hit.source), filter)})
 	}
 	m.docHits = filtered
-	m.docTable.SetRows(rows)
-	if m.docTable.Cursor() >= len(rows) {
-		m.docTable.SetCursor(max(0, len(rows)-1))
+	m.docPage = 0
+	m.renderDocumentPage()
+}
+
+// docPageSize returns how many document rows fit on one screen page, based
+// on the table's visible height.
+func (m *Model) docPageSize() int {
+	return max(1, m.docTable.Height())
+}
+
+// docPageCount returns how many screen pages the currently loaded/filtered
+// documents span.
+func (m Model) docPageCount() int {
+	return max(1, (len(m.docHits)+m.docPageSize()-1)/m.docPageSize())
+}
+
+// renderDocumentPage slices the filtered documents to the current page and
+// loads only those rows into the table, so up/down movement and left/right
+// paging operate on discrete pages instead of one continuously scrolling
+// list.
+func (m *Model) renderDocumentPage() {
+	pageSize := m.docPageSize()
+	totalPages := max(1, (len(m.docHits)+pageSize-1)/pageSize)
+	if m.docPage >= totalPages {
+		m.docPage = totalPages - 1
 	}
+	if m.docPage < 0 {
+		m.docPage = 0
+	}
+	filter := strings.ToLower(strings.TrimSpace(m.docFilter))
+	start := m.docPage * pageSize
+	end := min(start+pageSize, len(m.docHits))
+
+	rows := make([]table.Row, 0, end-start)
+	for _, hit := range m.docHits[start:end] {
+		rows = append(rows, table.Row{highlightMatch(hit.id, filter), highlightMatch(documentPreview(hit.source), filter)})
+	}
+	m.docTable.SetRows(rows)
+	m.docTable.SetCursor(0)
 }
 
 func documentPreview(source any) string {
@@ -279,11 +322,11 @@ func compactJSON(value any) string {
 }
 
 func (m Model) selectedDocument() (documentHit, bool) {
-	cursor := m.docTable.Cursor()
-	if cursor < 0 || cursor >= len(m.docHits) {
+	index := m.docPage*m.docPageSize() + m.docTable.Cursor()
+	if index < 0 || index >= len(m.docHits) {
 		return documentHit{}, false
 	}
-	return m.docHits[cursor], true
+	return m.docHits[index], true
 }
 
 func (m *Model) receiveDocument(body any) {

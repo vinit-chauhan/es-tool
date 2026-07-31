@@ -105,6 +105,7 @@ type Model struct {
 	docTable           table.Model
 	allDocHits         []documentHit
 	docHits            []documentHit
+	docPage            int
 	docFilter          string
 	query              string
 	sort               string
@@ -321,6 +322,7 @@ func (m *Model) resize() {
 	m.docTable.SetHeight(contentHeight)
 	m.docTable.SetWidth(max(20, m.width-2))
 	m.setDocumentColumns()
+	m.renderDocumentPage()
 	m.docView.Width = max(10, m.width-4)
 	m.docView.Height = contentHeight
 	m.settingsTable.SetHeight(contentHeight)
@@ -559,6 +561,9 @@ func (m Model) screenView() string {
 		return tab + "\n" + m.detailView.View()
 	case screenDocuments:
 		summary := fmt.Sprintf("Showing %d–%d of %d", min(m.from+1, m.total), min(m.from+len(m.docHits), m.total), m.total)
+		if pages := m.docPageCount(); pages > 1 {
+			summary += fmt.Sprintf(" (page %d/%d)", m.docPage+1, pages)
+		}
 		return styles.subtitle.Render(summary+m.querySummary()) + "\n" + m.docTable.View()
 	case screenDocument:
 		return m.docView.View()
@@ -585,7 +590,7 @@ func (m Model) screenHint() string {
 	case screenIndexDetails:
 		return "tab: settings/mappings • r: refresh • esc: back • ?: help • q: quit"
 	case screenDocuments:
-		return "enter: view • a: add • e: edit • d: delete • /: filter • f: query • n/p: page • ?: help • esc: back"
+		return "enter: view • a: add • e: edit • d: delete • ←/→: page • /: filter • f: query • n/p: fetch batch • ?: help • esc: back"
 	case screenDocument:
 		return "e: edit • u/U: update/upsert • d: delete • w: wrap • ?: help • esc: back"
 	case screenSettings:
