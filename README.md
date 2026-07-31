@@ -115,8 +115,9 @@ anywhere · `Esc` goes back · `Ctrl+C`/`q` quits. Lists and viewers scroll with
 Settings (`.`) stores named cluster profiles in `es-tool/config.json` under
 the platform's user config directory. The file can contain API keys or
 passwords and is written with owner-only (`0600`) permissions; secret fields
-are masked in the TUI. `c` on the settings screen opens a quick-connect prompt
-that configures the client for the current session only, without saving a
+are masked in the TUI. `c` on the settings screen opens quick connect — the
+same connection form as the profile editor (URL, authentication, TLS
+verification) — and connects for the current session only, without saving a
 profile.
 
 Each saved profile shows its own live health (`green`, `yellow`, `red`, or

@@ -24,6 +24,14 @@ func TestEditorFieldsFollowAuthMode(t *testing.T) {
 	}
 }
 
+func TestSessionEditorHasNoNameField(t *testing.T) {
+	m := Model{editingAuth: "basic", editingSession: true}
+	want := []editorFieldID{fieldURL, fieldAuth, fieldUser, fieldPassword, fieldTLS, fieldSave}
+	if got := m.editorFields(); !reflect.DeepEqual(got, want) {
+		t.Errorf("session editorFields() = %v, want %v", got, want)
+	}
+}
+
 func TestEditorDirtyDetection(t *testing.T) {
 	base := appconfig.Cluster{Name: "prod", URL: "https://example.com", VerifyTLS: true}
 	m := Model{

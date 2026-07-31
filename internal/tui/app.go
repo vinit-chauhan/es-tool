@@ -43,7 +43,6 @@ const (
 	promptClusterAPIKey
 	promptClusterUser
 	promptClusterPassword
-	promptQuickConnectURL
 	promptDeleteProfile
 	promptCreateDocumentID
 	promptDeleteByQuery
@@ -126,6 +125,7 @@ type Model struct {
 	editingCluster  appconfig.Cluster
 	editingOriginal string
 	editingAuth     string
+	editingSession  bool
 	editingBaseline appconfig.Cluster
 	baselineAuth    string
 	editorCursor    int
@@ -400,10 +400,6 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.editingCluster.User = value
 		case promptClusterPassword:
 			m.editingCluster.Password = value
-		case promptQuickConnectURL:
-			if cmd := m.quickConnect(value); cmd != nil {
-				return m, cmd
-			}
 		case promptDeleteProfile:
 			if value != m.pendingProfile {
 				m.status = notification{text: "Delete cancelled: profile name did not match", isErr: true}

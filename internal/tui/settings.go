@@ -168,7 +168,7 @@ func (m *Model) updateSettings(msg tea.KeyMsg) tea.Cmd {
 			return m.openPrompt(promptDeleteProfile, "Type "+cluster.Name+" to delete:", "")
 		}
 	case "c":
-		return m.openPrompt(promptQuickConnectURL, "Session URL:", m.client.BaseURL)
+		m.openSessionEditor()
 	default:
 		var cmd tea.Cmd
 		m.settingsTable, cmd = m.settingsTable.Update(msg)
@@ -257,23 +257,6 @@ func (m *Model) deleteProfile(name string) {
 	m.status = notification{text: "Deleted profile " + name}
 }
 
-func (m *Model) quickConnect(rawURL string) tea.Cmd {
-	cluster := appconfig.Cluster{
-		Name:      "session",
-		URL:       rawURL,
-		VerifyTLS: true,
-	}
-	cluster.Normalize()
-	if err := cluster.Validate(); err != nil {
-		m.status = notification{text: err.Error(), isErr: true}
-		return nil
-	}
-	m.client.Configure(esclient.Options{BaseURL: cluster.URL, VerifyTLS: true})
-	m.activeCluster = ""
-	m.status = notification{text: "Connected for this session only"}
-	return m.gotoIndices()
-}
-
 // ---------------------------------------------------------------------------
 // Cluster profile editor
 // ---------------------------------------------------------------------------
@@ -291,9 +274,14 @@ const (
 	fieldSave
 )
 
-// editorFields lists the navigable rows for the current auth mode.
+// editorFields lists the navigable rows for the current auth mode. Session
+// connections have no profile name because nothing is written to disk.
 func (m Model) editorFields() []editorFieldID {
-	fields := []editorFieldID{fieldName, fieldURL, fieldAuth}
+	fields := make([]editorFieldID, 0, 7)
+	if !m.editingSession {
+		fields = append(fields, fieldName)
+	}
+	fields = append(fields, fieldURL, fieldAuth)
 	switch m.editingAuth {
 	case "apikey":
 		fields = append(fields, fieldAPIKey)
@@ -304,9 +292,24 @@ func (m Model) editorFields() []editorFieldID {
 }
 
 func (m *Model) openClusterEditor(originalName string, cluster appconfig.Cluster) {
+	m.editingSession = false
 	m.editingOriginal = originalName
 	m.editingCluster = cluster
 	m.editingAuth = clusterAuthMode(cluster)
+	m.editingBaseline = cluster
+	m.baselineAuth = m.editingAuth
+	m.editorCursor = 0
+	m.pushScreen(screenClusterEditor)
+}
+
+// openSessionEditor opens the same connection form as the profile editor, but
+// connecting applies only to the current session — nothing is saved.
+func (m *Model) openSessionEditor() {
+	cluster := appconfig.Cluster{Name: "session", URL: m.client.BaseURL, VerifyTLS: m.client.VerifyTLS}
+	m.editingSession = true
+	m.editingOriginal = ""
+	m.editingCluster = cluster
+	m.editingAuth = "none"
 	m.editingBaseline = cluster
 	m.baselineAuth = m.editingAuth
 	m.editorCursor = 0
@@ -418,6 +421,10 @@ func (m Model) clusterEditorView() string {
 		fieldTLS:      "TLS",
 		fieldSave:     "",
 	}
+	saveLabel := "Save and connect"
+	if m.editingSession {
+		saveLabel = "Connect (session only)"
+	}
 	value := map[editorFieldID]string{
 		fieldName:     valueOrEmpty(m.editingCluster.Name),
 		fieldURL:      valueOrEmpty(m.editingCluster.URL),
@@ -426,7 +433,7 @@ func (m Model) clusterEditorView() string {
 		fieldUser:     valueOrEmpty(m.editingCluster.User),
 		fieldPassword: secret(m.editingCluster.Password),
 		fieldTLS:      tls + styles.dim.Render("  (←/→ to change)"),
-		fieldSave:     styles.key.Render("Save and connect"),
+		fieldSave:     styles.key.Render(saveLabel),
 	}
 
 	fields := m.editorFields()
@@ -450,6 +457,9 @@ func (m Model) clusterEditorView() string {
 	}
 
 	title := "Cluster profile"
+	if m.editingSession {
+		title = "Quick connect — not saved to disk"
+	}
 	if m.editorDirty() {
 		title += styles.warning.Render("  (unsaved changes)")
 	}
@@ -483,6 +493,21 @@ func (m *Model) saveEditingCluster() tea.Cmd {
 			return nil
 		}
 	}
+
+	if m.editingSession {
+		cluster.Normalize()
+		if err := cluster.Validate(); err != nil {
+			m.status = notification{text: err.Error(), isErr: true}
+			return nil
+		}
+		configureClient(m.client, cluster)
+		m.activeCluster = ""
+		m.editingBaseline = m.editingCluster
+		m.baselineAuth = m.editingAuth
+		m.status = notification{text: "Connected for this session only"}
+		return m.gotoIndices()
+	}
+
 	next := m.config.Clone()
 	if err := next.Upsert(m.editingOriginal, cluster); err != nil {
 		m.status = notification{text: err.Error(), isErr: true}

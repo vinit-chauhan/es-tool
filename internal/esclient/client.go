@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -182,6 +183,13 @@ func (c *Client) Request(method, path string, body any, params map[string]string
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		// url.Error prefixes the message with the full request URL, which
+		// buries the actual cause (TLS failure, refused connection, ...) when
+		// the message is displayed in limited space. Lead with the cause.
+		var ue *url.Error
+		if errors.As(err, &ue) && ue.Err != nil {
+			err = ue.Err
+		}
 		return 0, nil, fmt.Errorf("connection error: %v (%s)", err, u)
 	}
 	defer resp.Body.Close()
