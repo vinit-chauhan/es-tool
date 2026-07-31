@@ -47,6 +47,9 @@ const (
 	promptDeleteProfile
 	promptCreateDocumentID
 	promptDeleteByQuery
+	promptSearchQuery
+	promptSearchSort
+	promptSearchSource
 )
 
 type notification struct {
@@ -93,9 +96,14 @@ type Model struct {
 	docHits            []documentHit
 	docFilter          string
 	query              string
+	sort               string
+	source             string
+	searchBody         map[string]any
+	idsOnly            bool
 	pageSize           int
 	from               int
 	total              int
+	exactCount         int
 	currentDocID       string
 	currentDoc         map[string]any
 	docView            viewport.Model
@@ -287,6 +295,8 @@ func (m *Model) updateScreen(msg tea.KeyMsg) tea.Cmd {
 		return m.updateSettings(msg)
 	case screenClusterEditor:
 		return m.updateClusterEditor(msg)
+	case screenSearch:
+		return m.updateSearch(msg)
 	}
 	return nil
 }
@@ -361,6 +371,12 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.loading = true
 				return m, deleteByQueryCmd(m)
 			}
+		case promptSearchQuery:
+			m.query = value
+		case promptSearchSort:
+			m.sort = value
+		case promptSearchSource:
+			m.source = value
 		}
 		return m, nil
 	}
@@ -461,10 +477,7 @@ func (m Model) screenView() string {
 		return tab + "\n" + m.detailView.View()
 	case screenDocuments:
 		summary := fmt.Sprintf("Showing %d–%d of %d", min(m.from+1, m.total), min(m.from+len(m.docHits), m.total), m.total)
-		if m.query != "" {
-			summary += " • query: " + m.query
-		}
-		return styles.subtitle.Render(summary) + "\n" + m.docTable.View()
+		return styles.subtitle.Render(summary+m.querySummary()) + "\n" + m.docTable.View()
 	case screenDocument:
 		return m.docView.View()
 	case screenSettings:
@@ -474,6 +487,8 @@ func (m Model) screenView() string {
 		return m.settingsTable.View()
 	case screenClusterEditor:
 		return m.clusterEditorView()
+	case screenSearch:
+		return m.searchView()
 	default:
 		return styles.panel.Width(max(20, m.width-4)).Render("Screen migration in progress.")
 	}
@@ -486,13 +501,15 @@ func (m Model) screenHint() string {
 	case screenIndexDetails:
 		return "tab/←/→: settings/mappings • r: refresh • b/esc: back • ?: help • q: quit"
 	case screenDocuments:
-		return "enter: view • c: create • e: replace • u/U: update/upsert • d/D: delete/doc query • /: filter • f: query"
+		return "enter: view • c: create • e: replace • u/U: update/upsert • d/D: delete/query • /: filter • f/F: query/builder"
 	case screenDocument:
 		return "e: replace • u/U: update/upsert • d: delete • w: wrap • ↑/↓/pgup/pgdn: scroll • b/esc: back"
 	case screenSettings:
 		return "enter: activate • a: add • e: edit • d: delete • c: quick connect • r: health • b: back"
 	case screenClusterEditor:
 		return "n: name • u: URL • a: auth • k: API key • x: user • p: password • t: TLS • s: save • b: cancel"
+	case screenSearch:
+		return "f: Lucene • s: sort • o: source • j: JSON body • i: IDs only • c: count • x: reset • enter: run • b: back"
 	default:
 		return "b/esc: back • ?: help • q: quit"
 	}
@@ -560,6 +577,8 @@ func (m *Model) handleResponse(msg requestMsg) tea.Cmd {
 		m.from = 0
 		m.status = notification{text: deleteByQueryResult(msg.body)}
 		return fetchDocumentsCmd(*m)
+	case operationExactCount:
+		m.receiveExactCount(msg.body)
 	}
 	return nil
 }

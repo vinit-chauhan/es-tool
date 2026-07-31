@@ -19,6 +19,7 @@ const (
 	editorFullDocument editorMode = iota
 	editorCreateDocument
 	editorPartialUpdate
+	editorSearchBody
 )
 
 const (
@@ -68,6 +69,20 @@ func (m *Model) openPartialUpdateEditor(id string, upsert bool) tea.Cmd {
 		action = "partial update (create if missing)"
 	}
 	m.status = notification{text: "Compose the " + action + " in your editor"}
+	return command
+}
+
+func (m *Model) openSearchBodyEditor() tea.Cmd {
+	initial := any(map[string]any{"query": map[string]any{"match_all": map[string]any{}}})
+	if m.searchBody != nil {
+		initial = m.searchBody
+	}
+	command, err := jsonEditorCmd(editorDoneMsg{mode: editorSearchBody, index: m.currentIndex}, initial)
+	if err != nil {
+		m.status = notification{text: "open editor: " + err.Error(), isErr: true}
+		return nil
+	}
+	m.status = notification{text: "Compose the search body in your editor; save an empty object to clear it"}
 	return command
 }
 
@@ -166,8 +181,19 @@ func (m *Model) handleEditorDone(msg editorDoneMsg) tea.Cmd {
 		m.status = notification{text: "edited file is not valid JSON: " + err.Error(), isErr: true}
 		return nil
 	}
-	if _, ok := edited.(map[string]any); !ok {
-		m.status = notification{text: "document _source must be a JSON object", isErr: true}
+	object, ok := edited.(map[string]any)
+	if !ok {
+		m.status = notification{text: "the edited JSON must be an object", isErr: true}
+		return nil
+	}
+	if msg.mode == editorSearchBody {
+		if len(object) == 0 {
+			m.searchBody = nil
+			m.status = notification{text: "Search body cleared"}
+			return nil
+		}
+		m.searchBody = object
+		m.status = notification{text: "Search body updated; press enter to run it"}
 		return nil
 	}
 	if msg.mode == editorFullDocument && util.JSONEqual(edited, msg.original) {

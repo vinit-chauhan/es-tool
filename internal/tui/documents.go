@@ -53,21 +53,13 @@ func (m *Model) setDocumentColumns() {
 }
 
 func fetchDocumentsCmd(m Model) tea.Cmd {
-	params := map[string]string{
-		"from":                strconv.Itoa(m.from),
-		"size":                strconv.Itoa(m.pageSize),
-		"seq_no_primary_term": "true",
-		"track_total_hits":    "true",
-	}
-	if m.query != "" {
-		params["q"] = m.query
-	}
+	method, body, params := searchRequest(m)
 	return requestCmd(
 		m.client,
 		operationDocuments,
-		"GET",
+		method,
 		"/"+url.PathEscape(m.currentIndex)+"/_search",
-		nil,
+		body,
 		params,
 	)
 }
@@ -105,6 +97,8 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 		return m.openPrompt(promptDocFilter, "Filter visible documents:", m.docFilter)
 	case "f":
 		return m.openPrompt(promptServerQuery, "Lucene query:", m.query)
+	case "F":
+		m.pushScreen(screenSearch)
 	case "s":
 		return m.openPrompt(promptPageSize, "Page size (1–10000):", strconv.Itoa(m.pageSize))
 	case "n":
@@ -148,7 +142,7 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 			return m.openPrompt(promptDeleteDocument, "Type "+hit.id+" to delete:", "")
 		}
 	case "D":
-		if m.query == "" {
+		if !m.hasQuery() {
 			m.status = notification{text: "Set a server query before using delete-by-query", isErr: true}
 			return nil
 		}
@@ -258,6 +252,9 @@ func (m *Model) applyDocumentFilter() {
 }
 
 func documentPreview(source any) string {
+	if source == nil {
+		return ""
+	}
 	object, ok := source.(map[string]any)
 	if !ok {
 		return compactJSON(source)

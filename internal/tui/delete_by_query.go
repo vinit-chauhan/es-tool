@@ -15,24 +15,30 @@ const (
 )
 
 func countForDeleteCmd(m Model) tea.Cmd {
+	method, body, params := countRequest(m)
 	return requestCmd(
 		m.client,
 		operationCountForDelete,
-		"GET",
+		method,
 		"/"+url.PathEscape(m.currentIndex)+"/_count",
-		nil,
-		map[string]string{"q": m.query},
+		body,
+		params,
 	)
 }
 
 func deleteByQueryCmd(m Model) tea.Cmd {
+	_, body, params := countRequest(m)
+	if params == nil {
+		params = map[string]string{}
+	}
+	params["refresh"] = "true"
 	return requestCmd(
 		m.client,
 		operationDeleteByQuery,
 		"POST",
 		"/"+url.PathEscape(m.currentIndex)+"/_delete_by_query",
-		nil,
-		map[string]string{"q": m.query, "refresh": "true"},
+		body,
+		params,
 	)
 }
 
