@@ -17,6 +17,13 @@ type editorMode int
 
 const (
 	editorFullDocument editorMode = iota
+	editorCreateDocument
+	editorPartialUpdate
+)
+
+const (
+	operationCreateDocument = "create-document"
+	operationUpdateDocument = "update-document"
 )
 
 type editorDoneMsg struct {
@@ -26,8 +33,42 @@ type editorDoneMsg struct {
 	original    any
 	seqNo       string
 	primaryTerm string
+	upsert      bool
 	raw         string
 	err         error
+}
+
+func (m *Model) openCreateDocumentEditor(id string) tea.Cmd {
+	command, err := jsonEditorCmd(editorDoneMsg{
+		mode:  editorCreateDocument,
+		index: m.currentIndex,
+		id:    strings.TrimSpace(id),
+	}, map[string]any{})
+	if err != nil {
+		m.status = notification{text: "open editor: " + err.Error(), isErr: true}
+		return nil
+	}
+	m.status = notification{text: "Compose the new document in your editor"}
+	return command
+}
+
+func (m *Model) openPartialUpdateEditor(id string, upsert bool) tea.Cmd {
+	command, err := jsonEditorCmd(editorDoneMsg{
+		mode:   editorPartialUpdate,
+		index:  m.currentIndex,
+		id:     id,
+		upsert: upsert,
+	}, map[string]any{})
+	if err != nil {
+		m.status = notification{text: "open editor: " + err.Error(), isErr: true}
+		return nil
+	}
+	action := "partial update"
+	if upsert {
+		action = "partial update (create if missing)"
+	}
+	m.status = notification{text: "Compose the " + action + " in your editor"}
+	return command
 }
 
 func (m *Model) openDocumentEditor(body any) tea.Cmd {
@@ -129,23 +170,50 @@ func (m *Model) handleEditorDone(msg editorDoneMsg) tea.Cmd {
 		m.status = notification{text: "document _source must be a JSON object", isErr: true}
 		return nil
 	}
-	if util.JSONEqual(edited, msg.original) {
+	if msg.mode == editorFullDocument && util.JSONEqual(edited, msg.original) {
 		m.status = notification{text: "No changes to save"}
 		return nil
 	}
 
-	params := map[string]string{"refresh": "true"}
-	if msg.seqNo != "" && msg.primaryTerm != "" {
-		params["if_seq_no"] = msg.seqNo
-		params["if_primary_term"] = msg.primaryTerm
-	}
 	m.loading = true
-	return requestCmd(
-		m.client,
-		operationEditDocument,
-		"PUT",
-		"/"+url.PathEscape(msg.index)+"/_doc/"+url.PathEscape(msg.id),
-		edited,
-		params,
-	)
+	switch msg.mode {
+	case editorCreateDocument:
+		method := "POST"
+		path := "/" + url.PathEscape(msg.index) + "/_doc"
+		if msg.id != "" {
+			method = "PUT"
+			path += "/" + url.PathEscape(msg.id)
+		}
+		return requestCmd(
+			m.client,
+			operationCreateDocument,
+			method,
+			path,
+			edited,
+			map[string]string{"refresh": "true"},
+		)
+	case editorPartialUpdate:
+		return requestCmd(
+			m.client,
+			operationUpdateDocument,
+			"POST",
+			"/"+url.PathEscape(msg.index)+"/_update/"+url.PathEscape(msg.id),
+			map[string]any{"doc": edited, "doc_as_upsert": msg.upsert},
+			map[string]string{"refresh": "true"},
+		)
+	default:
+		params := map[string]string{"refresh": "true"}
+		if msg.seqNo != "" && msg.primaryTerm != "" {
+			params["if_seq_no"] = msg.seqNo
+			params["if_primary_term"] = msg.primaryTerm
+		}
+		return requestCmd(
+			m.client,
+			operationEditDocument,
+			"PUT",
+			"/"+url.PathEscape(msg.index)+"/_doc/"+url.PathEscape(msg.id),
+			edited,
+			params,
+		)
+	}
 }

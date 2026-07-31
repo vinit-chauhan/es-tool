@@ -45,6 +45,7 @@ const (
 	promptClusterPassword
 	promptQuickConnectURL
 	promptDeleteProfile
+	promptCreateDocumentID
 )
 
 type notification struct {
@@ -346,6 +347,10 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.deleteProfile(m.pendingProfile)
 			}
+		case promptCreateDocumentID:
+			if cmd := m.openCreateDocumentEditor(value); cmd != nil {
+				return m, cmd
+			}
 		}
 		return m, nil
 	}
@@ -471,9 +476,9 @@ func (m Model) screenHint() string {
 	case screenIndexDetails:
 		return "tab/←/→: settings/mappings • r: refresh • b/esc: back • ?: help • q: quit"
 	case screenDocuments:
-		return "enter/v: view • e: edit • d: delete • /: filter • f: query • n/p: page • s: size • r: refresh • b: back"
+		return "enter: view • c: create • e: replace • u/U: update/upsert • d: delete • /: filter • f: query • n/p: page"
 	case screenDocument:
-		return "e: edit • d: delete • w: wrap • ↑/↓/pgup/pgdn: scroll • b/esc: back"
+		return "e: replace • u/U: update/upsert • d: delete • w: wrap • ↑/↓/pgup/pgdn: scroll • b/esc: back"
 	case screenSettings:
 		return "enter: activate • a: add • e: edit • d: delete • c: quick connect • r: health • b: back"
 	case screenClusterEditor:
@@ -525,6 +530,18 @@ func (m *Model) handleResponse(msg requestMsg) tea.Cmd {
 		m.status = notification{text: "Document deleted"}
 		if m.screen == screenDocument {
 			m.popScreen()
+		}
+		return fetchDocumentsCmd(*m)
+	case operationCreateDocument:
+		m.status = notification{text: "Document created"}
+		return fetchDocumentsCmd(*m)
+	case operationUpdateDocument:
+		m.status = notification{text: "Document updated"}
+		if m.screen == screenDocument {
+			return tea.Batch(
+				fetchDocumentsCmd(*m),
+				getDocumentCmd(m.client, m.currentIndex, m.currentDocID, operationGetDocument),
+			)
 		}
 		return fetchDocumentsCmd(*m)
 	}

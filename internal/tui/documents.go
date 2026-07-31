@@ -134,6 +134,13 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 			m.loading = true
 			return getDocumentCmd(m.client, m.currentIndex, hit.id, operationGetDocumentForEdit)
 		}
+	case "c":
+		return m.openPrompt(promptCreateDocumentID, "Document ID (blank for auto-generated):", "")
+	case "u", "U":
+		if hit, ok := m.selectedDocument(); ok {
+			m.currentDocID = hit.id
+			return m.openPartialUpdateEditor(hit.id, msg.String() == "U")
+		}
 	case "d":
 		if hit, ok := m.selectedDocument(); ok {
 			m.currentDocID = hit.id
@@ -166,6 +173,8 @@ func (m *Model) updateDocumentView(msg tea.KeyMsg) tea.Cmd {
 	case "e":
 		m.loading = true
 		return getDocumentCmd(m.client, m.currentIndex, m.currentDocID, operationGetDocumentForEdit)
+	case "u", "U":
+		return m.openPartialUpdateEditor(m.currentDocID, msg.String() == "U")
 	case "d":
 		m.pendingDocID = m.currentDocID
 		return m.openPrompt(promptDeleteDocument, "Type "+m.currentDocID+" to delete:", "")
