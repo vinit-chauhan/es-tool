@@ -104,6 +104,7 @@ func (m *Model) updateIndices(msg tea.KeyMsg) tea.Cmd {
 	case "i":
 		m.pushScreen(screenClusterInfo)
 	case ".":
+		m.refreshSettingsRows()
 		m.pushScreen(screenSettings)
 	default:
 		var cmd tea.Cmd

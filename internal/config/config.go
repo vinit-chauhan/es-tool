@@ -130,6 +130,22 @@ func (c *Config) Upsert(originalName string, cluster Cluster) error {
 	return nil
 }
 
+// Delete removes a named cluster. Deleting the active cluster also clears the
+// persisted default; it does not alter an already configured live client.
+func (c *Config) Delete(name string) error {
+	for i, cluster := range c.Clusters {
+		if cluster.Name != name {
+			continue
+		}
+		c.Clusters = append(c.Clusters[:i], c.Clusters[i+1:]...)
+		if c.Active == name {
+			c.Active = ""
+		}
+		return nil
+	}
+	return fmt.Errorf("cluster %q no longer exists", name)
+}
+
 // Validate checks the complete config, including unique names and Active.
 func (c Config) Validate() error {
 	seen := make(map[string]struct{}, len(c.Clusters))

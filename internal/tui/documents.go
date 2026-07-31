@@ -146,6 +146,7 @@ func (m *Model) updateDocuments(msg tea.KeyMsg) tea.Cmd {
 		m.pushScreen(screenIndexDetails)
 		return fetchIndexDetailsCmd(m.client, m.currentIndex)
 	case ".":
+		m.refreshSettingsRows()
 		m.pushScreen(screenSettings)
 	default:
 		var cmd tea.Cmd
@@ -171,6 +172,11 @@ func (m *Model) updateDocumentView(msg tea.KeyMsg) tea.Cmd {
 	case "w":
 		m.wrapJSON = !m.wrapJSON
 		m.refreshDocumentViewport()
+	case "S":
+		m.detailTab = 0
+		m.loading = true
+		m.pushScreen(screenIndexDetails)
+		return fetchIndexDetailsCmd(m.client, m.currentIndex)
 	default:
 		var cmd tea.Cmd
 		m.docView, cmd = m.docView.Update(msg)

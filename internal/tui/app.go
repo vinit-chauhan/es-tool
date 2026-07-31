@@ -38,6 +38,13 @@ const (
 	promptServerQuery
 	promptPageSize
 	promptDeleteDocument
+	promptClusterName
+	promptClusterURL
+	promptClusterAPIKey
+	promptClusterUser
+	promptClusterPassword
+	promptQuickConnectURL
+	promptDeleteProfile
 )
 
 type notification struct {
@@ -64,9 +71,10 @@ type Model struct {
 	status   notification
 	showHelp bool
 
-	prompt      textinput.Model
-	promptKind  promptKind
-	promptLabel string
+	prompt       textinput.Model
+	promptKind   promptKind
+	promptLabel  string
+	promptSecret bool
 
 	allIndices  []map[string]any
 	indexTable  table.Model
@@ -91,6 +99,12 @@ type Model struct {
 	docView      viewport.Model
 	wrapJSON     bool
 	pendingDocID string
+
+	settingsTable   table.Model
+	editingCluster  appconfig.Cluster
+	editingOriginal string
+	editingAuth     string
+	pendingProfile  string
 }
 
 // Run launches the full-screen TUI.
@@ -148,6 +162,7 @@ func newModel(client *esclient.Client, startIndex string) (Model, error) {
 		docTable:      newDocumentTable(),
 		pageSize:      50,
 		docView:       viewport.New(0, 0),
+		settingsTable: newSettingsTable(),
 	}
 	if startIndex != "" {
 		model.screen = screenDocuments
@@ -188,6 +203,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		commands = append(commands, cmd)
 	case healthMsg:
+		m.loading = false
 		m.health = healthFromResponse(msg.status, msg.body, msg.err)
 	case requestMsg:
 		m.loading = false
@@ -221,6 +237,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if msg.String() == "." && m.screen != screenSettings && m.screen != screenClusterEditor {
+			m.refreshSettingsRows()
+			m.pushScreen(screenSettings)
+			return m, nil
+		}
 		cmd := m.updateScreen(msg)
 		if cmd != nil {
 			commands = append(commands, cmd)
@@ -241,6 +262,9 @@ func (m *Model) resize() {
 	m.setDocumentColumns()
 	m.docView.Width = max(10, m.width-4)
 	m.docView.Height = contentHeight
+	m.settingsTable.SetHeight(contentHeight)
+	m.settingsTable.SetWidth(max(20, m.width-2))
+	m.setSettingsColumns()
 	if m.currentDoc != nil {
 		m.refreshDocumentViewport()
 	}
@@ -256,6 +280,10 @@ func (m *Model) updateScreen(msg tea.KeyMsg) tea.Cmd {
 		return m.updateDocuments(msg)
 	case screenDocument:
 		return m.updateDocumentView(msg)
+	case screenSettings:
+		return m.updateSettings(msg)
+	case screenClusterEditor:
+		return m.updateClusterEditor(msg)
 	}
 	return nil
 }
@@ -298,6 +326,26 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.loading = true
 				return m, deleteDocumentCmd(m.client, m.currentIndex, m.pendingDocID)
 			}
+		case promptClusterName:
+			m.editingCluster.Name = value
+		case promptClusterURL:
+			m.editingCluster.URL = value
+		case promptClusterAPIKey:
+			m.editingCluster.APIKey = value
+		case promptClusterUser:
+			m.editingCluster.User = value
+		case promptClusterPassword:
+			m.editingCluster.Password = value
+		case promptQuickConnectURL:
+			if cmd := m.quickConnect(value); cmd != nil {
+				return m, cmd
+			}
+		case promptDeleteProfile:
+			if value != m.pendingProfile {
+				m.status = notification{text: "Delete cancelled: profile name did not match", isErr: true}
+			} else {
+				m.deleteProfile(m.pendingProfile)
+			}
 		}
 		return m, nil
 	}
@@ -307,8 +355,23 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) openPrompt(kind promptKind, label, value string) tea.Cmd {
+	return m.openPromptValue(kind, label, value, false)
+}
+
+func (m *Model) openSecretPrompt(kind promptKind, label, value string) tea.Cmd {
+	return m.openPromptValue(kind, label, value, true)
+}
+
+func (m *Model) openPromptValue(kind promptKind, label, value string, secret bool) tea.Cmd {
 	m.promptKind = kind
 	m.promptLabel = label
+	m.promptSecret = secret
+	if secret {
+		m.prompt.EchoMode = textinput.EchoPassword
+		m.prompt.EchoCharacter = '•'
+	} else {
+		m.prompt.EchoMode = textinput.EchoNormal
+	}
 	m.prompt.SetValue(value)
 	m.prompt.CursorEnd()
 	m.prompt.Focus()
@@ -319,6 +382,7 @@ func (m *Model) closePrompt() {
 	m.prompt.Blur()
 	m.promptKind = promptNone
 	m.promptLabel = ""
+	m.promptSecret = false
 }
 
 func (m Model) View() string {
@@ -388,6 +452,13 @@ func (m Model) screenView() string {
 		return styles.subtitle.Render(summary) + "\n" + m.docTable.View()
 	case screenDocument:
 		return m.docView.View()
+	case screenSettings:
+		if len(m.settingsTable.Rows()) == 0 {
+			return styles.panel.Width(max(20, m.width-4)).Render("No saved profiles. Press a to add one or c for a session-only connection.")
+		}
+		return m.settingsTable.View()
+	case screenClusterEditor:
+		return m.clusterEditorView()
 	default:
 		return styles.panel.Width(max(20, m.width-4)).Render("Screen migration in progress.")
 	}
@@ -403,6 +474,10 @@ func (m Model) screenHint() string {
 		return "enter/v: view • e: edit • d: delete • /: filter • f: query • n/p: page • s: size • r: refresh • b: back"
 	case screenDocument:
 		return "e: edit • d: delete • w: wrap • ↑/↓/pgup/pgdn: scroll • b/esc: back"
+	case screenSettings:
+		return "enter: activate • a: add • e: edit • d: delete • c: quick connect • r: health • b: back"
+	case screenClusterEditor:
+		return "n: name • u: URL • a: auth • k: API key • x: user • p: password • t: TLS • s: save • b: cancel"
 	default:
 		return "b/esc: back • ?: help • q: quit"
 	}
