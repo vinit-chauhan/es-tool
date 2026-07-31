@@ -29,10 +29,14 @@ func newSettingsTable() table.Model {
 }
 
 func settingsColumns(width int) []table.Column {
+	// 2 cells of table padding per column (6 columns = 12 cells); the URL
+	// column absorbs whatever is left after the fixed columns.
+	name := min(24, max(12, width/5))
+	url := max(20, width-name-40)
 	return []table.Column{
 		{Title: "", Width: 3},
-		{Title: "Name", Width: min(24, max(12, width/5))},
-		{Title: "URL", Width: max(20, width/2-8)},
+		{Title: "Name", Width: name},
+		{Title: "URL", Width: url},
 		{Title: "Health", Width: 9},
 		{Title: "Auth", Width: 8},
 		{Title: "TLS", Width: 6},

@@ -41,10 +41,11 @@ func newDocumentTable() table.Model {
 }
 
 func documentColumns(width int) []table.Column {
+	// 2 cells of table padding per column (2 columns = 4 cells).
 	idWidth := min(40, max(16, width/3))
 	return []table.Column{
 		{Title: "Document ID", Width: idWidth},
-		{Title: "Preview", Width: max(20, width-idWidth-5)},
+		{Title: "Preview", Width: max(20, width-idWidth-7)},
 	}
 }
 

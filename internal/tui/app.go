@@ -487,14 +487,19 @@ func (m Model) View() string {
 		body = m.spinner.View() + " " + styles.dim.Render("Loading…") + "\n" + body
 	}
 
-	// Stretch the body to fill the terminal so the footer (and any active
-	// prompt above it) stays pinned to the bottom rows regardless of how tall
-	// the current screen's content is.
+	// Stretch or clamp the body to exactly fill the terminal so the footer
+	// (and any active prompt above it) is always on the bottom rows, no
+	// matter how short or tall the current screen's content is.
 	if m.height > 0 {
 		bodyHeight := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
-		if gap := bodyHeight - lipgloss.Height(body); gap > 0 {
-			body += strings.Repeat("\n", gap)
+		lines := strings.Split(body, "\n")
+		if len(lines) > bodyHeight {
+			lines = lines[:max(0, bodyHeight)]
 		}
+		for len(lines) < bodyHeight {
+			lines = append(lines, "")
+		}
+		body = strings.Join(lines, "\n")
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
@@ -554,21 +559,21 @@ func (m Model) screenView() string {
 func (m Model) screenHint() string {
 	switch m.screen {
 	case screenIndices:
-		return "enter: open • /: filter • h: hidden • i: details • c: cluster info • r: refresh • ?: help • q: quit"
+		return "enter: open • /: filter • h: hidden • i: details • c: cluster • .: settings • ?: help • q: quit"
 	case screenIndexDetails:
 		return "tab: settings/mappings • r: refresh • esc: back • ?: help • q: quit"
 	case screenDocuments:
-		return "enter: view • a: create • e: edit • u/U: update/upsert • d/D: delete/by query • /: filter • f/F: query/builder"
+		return "enter: view • a: add • e: edit • d: delete • /: filter • f: query • n/p: page • ?: help • esc: back"
 	case screenDocument:
-		return "e: edit • u/U: update/upsert • d: delete • w: wrap • ↑/↓ j/k: scroll • esc: back"
+		return "e: edit • u/U: update/upsert • d: delete • w: wrap • ?: help • esc: back"
 	case screenSettings:
-		return "enter: connect • a: add • e: edit • d: delete • c: quick connect • r: health • esc: back"
+		return "enter: connect • a: add • e: edit • d: delete • c: quick connect • r: health • ?: help • esc: back"
 	case screenClusterEditor:
-		return "↑/↓: select field • enter: edit/toggle • ←/→: change value • ctrl+s: save • esc: back"
+		return "↑/↓: field • enter: edit/toggle • ←/→: change • ctrl+s: save • esc: back"
 	case screenSearch:
-		return "f: Lucene • s: sort • o: source • j: JSON body • i: IDs only • c: count • x: reset • enter: run • esc: back"
+		return "f: query • s: sort • o: source • j: body • i: ids • c: count • x: reset • enter: run • esc: back"
 	case screenClusterInfo:
-		return "r: refresh • ↑/↓ j/k: scroll • esc: back • ?: help • q: quit"
+		return "r: refresh • ?: help • esc: back • q: quit"
 	default:
 		return "esc: back • ?: help • q: quit"
 	}

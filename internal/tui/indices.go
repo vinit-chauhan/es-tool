@@ -35,7 +35,10 @@ func newIndexTable() table.Model {
 }
 
 func indexColumns(width int) []table.Column {
-	remaining := max(16, width-40)
+	// The table adds 2 cells of padding per column (5 columns = 10 cells),
+	// so the content widths must sum to at most width-10 or rows overflow
+	// the terminal, wrap, and push the footer off-screen.
+	remaining := max(16, width-49)
 	return []table.Column{
 		{Title: "Health", Width: 9},
 		{Title: "Status", Width: 8},
